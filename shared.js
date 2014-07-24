@@ -722,7 +722,6 @@ RunnerClass.prototype.jump = function(x) {
   return h[Math.round(x) % 32];
 }
 
-
 // Timer
 function easyTimer(time, func) {
   this.time = time;
@@ -1508,9 +1507,9 @@ function resizeScreen() {
         "background-image: url('" + b.image.src + "');" +
         "background-repeat: no-repeat;" +
         "background-size: 100% 100%;" +
-	      "border: 0px;" +
-	      "width: " + 5 * MAGNIFY + "px;" +
-	      "height:" + 8 * MAGNIFY + 'px;}', 0
+        "border: 0px;" +
+        "width: " + 5 * MAGNIFY + "px;" +
+        "height:" + 8 * MAGNIFY + 'px;}', 0
       );
     }
   }
@@ -1690,13 +1689,13 @@ function onload() {
   // It's very hard to set values to a pseudo element with JS.
   // http://pankajparashar.com/posts/modify-pseudo-elements-css/
   s.sheet.insertRule('#scroll::-webkit-slider-thumb {' +
-	  "-webkit-appearance: none !important;" +
-	  "border-radius: 0px;" +
-	  "background-color: #A870D0;" +
-	  "box-shadow:inset 0 0 0px;" +
-	  "border: 0px;" +
-	  "width: " + 5 * MAGNIFY + "px;" +
-	  "height:" + 7 * MAGNIFY + 'px;}', 0
+    "-webkit-appearance: none !important;" +
+    "border-radius: 0px;" +
+    "background-color: #A870D0;" +
+    "box-shadow:inset 0 0 0px;" +
+    "border: 0px;" +
+    "width: " + 5 * MAGNIFY + "px;" +
+    "height:" + 7 * MAGNIFY + "px;}", 0
   );
   s.sheet.insertRule('#scroll:focus {outline: none !important;}', 0);
 
@@ -1830,13 +1829,13 @@ function onload() {
   // It's very hard to set values to a pseudo element with JS.
   // http://pankajparashar.com/posts/modify-pseudo-elements-css/
   s.sheet.insertRule('#tempo::-webkit-slider-thumb {' +
-	  "-webkit-appearance: none !important;" +
+    "-webkit-appearance: none !important;" +
     "background-image: url('" + t.src + "');" +
     "background-repeat: no-repeat;" +
     "background-size: 100% 100%;" +
-	  "border: 0px;" +
-	  "width: " + 5 * MAGNIFY + "px;" +
-	  "height:" + 8 * MAGNIFY + 'px;}', 0
+    "border: 0px;" +
+    "width: " + 5 * MAGNIFY + "px;" +
+    "height:" + 8 * MAGNIFY + 'px;}', 0
   );
   s.sheet.insertRule('#tempo:focus {outline: none !important;}', 0);
 
@@ -1846,8 +1845,7 @@ function onload() {
   b.addEventListener("click", function (e) {
     var r = document.getElementById('scroll');
     if (r.value > 0) {
-      r.value--;
-      CurPos--;
+      CurPos = --r.value;
     }
   });
   CONSOLE.appendChild(b);
@@ -1857,8 +1855,7 @@ function onload() {
   b.addEventListener("click", function (e) {
     var r = document.getElementById('scroll');
     if (r.value < CurMaxBars - 6) {
-      r.value++;
-      CurPos++;
+      CurPos = ++r.value;
     }
   });
   CONSOLE.appendChild(b);
@@ -2022,6 +2019,32 @@ function onload() {
   }).catch(function (err) {
     alert("Invalid GET parameter :" + err);
     console.error("Invalid GET parameter :" + err.stack);
+  });
+
+  document.addEventListener('keydown',function(e) {
+    switch (e.keyCode) {
+      case 32: // space -> play/stop or restart with shift
+        var playBtn = document.getElementById('play');
+        if (playBtn.disabled == false || e.shiftKey) {
+          playListener.call(playBtn,e);
+        } else {
+          stopListener.call(document.getElementById('stop'),e);
+        }
+        e.preventDefault();
+        break;
+
+      case 37: // left -> scroll left
+        var r = document.getElementById('scroll');
+        if (r.value > 0) CurPos = --r.value;
+        e.preventDefault();
+        break;
+
+      case 39: // right -> scroll right
+        var r = document.getElementById('scroll');
+        if (r.value < CurMaxBars - 6) CurPos = ++r.value;
+        e.preventDefault();
+        break;
+    }
   });
 
   requestAnimFrame(doAnimation);
