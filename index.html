@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-<title>Mario Sequencer</title>
+<title>Miku Miku Sequencer</title>
 <link rel="stylesheet" href="gh-fork-ribbon.css">
 <style>
 .game {
@@ -19,9 +19,13 @@
   <option value="1">1x1</option>
   <option value="2" selected>2x2</option>
   <option value="3">3x3</option>
+  <option value="4">4x4</option>
 </select>
+<table>
+<tr>
+<td>
 <div id="console"
-  style="position: relative; margin:0px auto; padding:0px; border:0px;">
+  style="position: relative; margin:0px; padding:0px; border:0px;">
   <canvas id="layer1" class="game"
     style="position: static; z-index: 0; opacity:1"></canvas>
   <canvas id="layer2" class="game"
@@ -29,9 +33,12 @@
   <image id="spinner" src="image/loading_transparent_.gif" width="46px"
     style="position: absolute; top:35%; left:47%; z-index:4;" />
 </div>
-<center>
-<button onclick="download()">Download</button>
-</center>
+</td><td>
+<textarea id="lyric" placeholder="‚Ð‚ç‚ª‚È‚Å‰ÌŽŒ‚ð“ü—Í" style="height:100%;">
+</textarea>
+</td></tr>
+</table>
+<button onclick="save()">SAVE</button>
 <script src="shared.js"></script>
 <div class="github-fork-ribbon-wrapper right-bottom">
   <div class="github-fork-ribbon">

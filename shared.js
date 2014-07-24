@@ -10,6 +10,59 @@ window.location.search.substr(1).split('&').forEach(function (s) {
   OPTS[tmp[0]] = tmp[1];
 });
 
+// MIDI init:
+//   Make global variable MIDIIN and MIDIOUT for playing NSX-39
+MIDIIN  = null;
+MIDIOUT = null;
+navigator.requestMIDIAccess({sysex:true}).then(function(midiAccess) {
+  var ins  = midiAccess.inputs();
+  var outs = midiAccess.outputs();
+  for (var i = 0; i < outs.length; i++) {
+    if (outs[i].name.substr(0, 6) == "NSX-39") {
+      MIDIOUT = outs[i];
+      MIDIOUT.stopAll = function () {
+        // This sysex looks easier,
+        //   this.send([0xF0,0x43,0x79,9,0x11,0x0D,0x0A,7,0,0,0xF7]);
+        // but it requires long time pause to start play again
+        for (var i = 0; i < 16; ++i)
+        {
+          var msg = [0xB0 | i, 0x79, 0x00];
+          this.send(msg);
+
+          var msg = [0xB0 | i, 0x78, 0x00];
+          this.send(msg);
+
+          var msg = [0xB0 | i, 0x7B, 0x00];
+          this.send(msg);
+        }
+      };
+      return;
+    }
+    if (ins[i].name.substr(0, 6) == "NSX-39") {
+      MIDIIN = ins[i];
+      MIDIIN.onmidimessage = function (e) {
+        var str = "MIDI message received at timestamp " + event.timestamp + "[" + event.data.length + " bytes]: ";
+        for (var i=0; i<event.data.length; i++) {
+          str += "0x" + event.data[i].toString(16) + " ";
+        }
+        console.log( str );
+      };
+    }
+  }
+  alert("POKEMIKU NOT FOUND");
+  console.log("POKEMIKU NOT FOUND");
+  console.log("This program needs YAMAHA NSX-39.");
+}, function (err) {
+  alert("Can't use MIDI:" + err);
+  console.log("Can't use MIDI:" + err);
+})
+/*
+     .catch(function (err) {
+  alert("Can't use MIDI:" + err);
+  console.log("Can't use MIDI:" + err);
+});
+*/
+
 // GLOBAL VARIABLES
 //   Constants: Full capital letters
 //   Variables: CamelCase
@@ -19,6 +72,8 @@ MAGNIFY = OPTS.mag || OPTS.magnify || 2;
 CHARSIZE = 16 * MAGNIFY;
 HALFCHARSIZE = Math.floor(CHARSIZE / 2);
 BUTTONS = [];
+ENDMARKIDX = -1;
+ERASERIDX  = -2;
 MouseX = 0;
 MouseY = 0;
 CONSOLE = document.getElementById("console");
@@ -29,18 +84,21 @@ CONSOLE.style.width  = ORGWIDTH  * MAGNIFY + "px";
 CONSOLE.style.height = ORGHEIGHT * MAGNIFY + "px";
 OFFSETLEFT = CONSOLE.offsetLeft;
 OFFSETTOP  = CONSOLE.offsetTop;
-CurChar = 0;
+CurChar = 0; // Index of SOUNDS(!)
 CurPos = 0;
 CurSong = undefined; // For Embedded Songs
 CurScore = {};
+Runner = null; // Keeps current runner
 DEFAULTMAXBARS = 24 * 4 + 1; // 24 bars by default
 DEFAULTTEMPO = 100;
 CurMaxBars = DEFAULTMAXBARS;
 Mario = null; // Mamma Mia!
+Miku  = null; // I'll make you Mikku Miku!
 AnimeID = 0; // ID for cancel animation
 PsedoSheet = null // CSSRules for manipulating pseudo elements
 RepeatMark = null // For Score
 EndMark    = null
+SysSnd = {}; // System Sounds
 
 /*
  * GameStatus: Game mode
@@ -53,11 +111,11 @@ GameStatus = 0;
 
 // shim layer with setTimeout fallback
 window.requestAnimFrame = (function(){
-return  window.requestAnimationFrame || 
-  window.webkitRequestAnimationFrame || 
-  window.mozRequestAnimationFrame    || 
-  window.oRequestAnimationFrame      || 
-  window.msRequestAnimationFrame     || 
+return  window.requestAnimationFrame ||
+  window.webkitRequestAnimationFrame ||
+  window.mozRequestAnimationFrame    ||
+  window.oRequestAnimationFrame      ||
+  window.msRequestAnimationFrame     ||
   function( callback ){
   window.setTimeout(callback, 1000 / 60);
 };
@@ -72,14 +130,17 @@ function SoundEntity(path) {
 }
 
 // SoundEntity#play
-// The all wav files are recorded in the tone F.
+// The all wav files are recorded in the tone F (= 65 in midi context).
 // You should choose correct playback rate to play a music.
 SoundEntity.prototype.play = function(scale, delay) {
   var source = AC.createBufferSource();
-  var tmps = scale & 0x0F;
-  var semitone = this.diff[tmps];
+//  var tmps = scale & 0x0F;
+//  var semitone = this.diff[tmps];
+  var semitone = scale - 65; // WAV is F
+  /*
   if ((scale & 0x80) != 0) semitone++;
   else if ((scale & 0x40) != 0) semitone--;
+  */
   if (delay == undefined) delay = 0;
   source.buffer = this.buffer;
   source.playbackRate.value = Math.pow(SEMITONERATIO, semitone);
@@ -107,10 +168,13 @@ SoundEntity.prototype.playChord = function(noteList, delay) {
   // I heard that Array#map is slower than for loop because of costs of calling methods.
   for (var i = 0; i < noteList.length; i++) {
     var source = AC.createBufferSource();
-    var scale = (noteList[i] & 0x0F);
-    var semitone = this.diff[scale];
+    var key = noteList[i];
+    /*
+    var semitone = this.diff[key];
     if ((noteList[i] & 0x80) != 0) semitone++;
     else if ((noteList[i] & 0x40) != 0) semitone--;
+    */
+    var semitone = key - 65;
     source.buffer = this.buffer;
     source.playbackRate.value = Math.pow(SEMITONERATIO, semitone);
 
@@ -156,44 +220,373 @@ SoundEntity.prototype.load = function() {
   });
 };
 
-// It's me, Mario!
-function MarioClass() {
+
+function isEbony(key) {
+  ebony = [false, true, false, true, false, false, true, false, true,
+           false, true, false];
+  return ebony[key % 12];
+}
+
+// Encode Note
+//   Encode parameters into 2 bytes length binary number.
+//   gridY: position in Y
+//   program: Instrument number
+//   isFlat: If user specified the note needs flat symbol
+//           MIDI note number can contain ebony key on the piano
+//           but ebony can be expressed with both sharp and flat on the score
+//           In this data format, if isEbony is True and isFlat is true,
+//           then the note is expressed with flat symbol.
+//           Otherwise, the note is expressed with sharp symbol.
+//   length: Musical note length
+//           0 is infinity.
+function encodeNote(gridY, program, isSharp, isFlat, length) {
+  var interval = [0, 2, 3, 5, 7, 8, 10, 12, 14, 15, 17, 19, 20];
+  if (isSharp == undefined) isSharp = false;
+  if (isFlat  == undefined) isFlat  = false;
+  key = 79 - interval[gridY];
+
+  if      (isSharp) {key++; isFlat = 0}
+  else if (isFlat ) {key--; isFlat = 1}
+  else                      isFlat = 0;
+
+  if (length == undefined) length = 0;
+  // Todo: Decide how to encode note length
+  return (program << 8 | (isFlat << 7) | key);
+}
+
+// Decode Note
+// return these values as an array
+//   Program
+//   key
+//   isFlat
+//   length
+function decodeNote(note) {
+  var key = (note & 0x7F);
+  var isFlat = (note & 0x80) != 0
+  var upper = (note >> 8);
+  var program = upper & 0x1F;
+  var length = upper >> 5;
+  return [program, key, isFlat, length];
+}
+
+// ToDo: Handle Octave changes
+//   Key: Key part only in Note (< 0x7F)
+//   isFlat: boolean
+function key2GridY(note, isFlat) {
+  //var nTable = [6, 6, 5, 4, 4, 3, 3, 2, 1, 1, 0, 0];
+  var nTable = [4, 4, 3, 3, 2, 1, 1, 0, 0, 6, 6, 5];
+  //var sTable = [12, 11, 11, 10, 10, 9, 8, 8, 7, 7, 6, 6];
+  var sTable = [11, 11, 10, 10, 9, 8, 8, 7, 7, 6, 6, 12];
+  var key = (note & 0x7F);
+  var doremi = key % 12;
+  var gridY;
+  if (key > 69) {
+    gridY = nTable[doremi];
+  } else if (key <= 69) {
+    gridY = sTable[doremi];
+  }
+  if (isFlat) gridY--;
+  return gridY;
+}
+
+// Make Char to number table for NSX-39
+PhoneticSymbols = [
+"‚ ", "‚¢", "‚¤", "‚¦", "‚¨", "‚©", "‚«", "‚­", "‚¯", "‚±",
+"‚ª", "‚¬", "‚®", "‚°", "‚²", "‚«‚á", "‚«‚ã", "‚«‚å",
+"‚¬‚á", "‚¬‚ã", "‚¬‚å", "‚³", "‚·‚¡", "‚·", "‚¹", "‚»",
+"‚´", "‚¸‚¡", "‚¸", "‚º", "‚¼", "‚µ‚á", "‚µ", "‚µ‚ã", "‚µ‚¥", "‚µ‚å",
+"‚¶‚á", "‚¶", "‚¶‚ã", "‚¶‚¥", "‚¶‚å", "‚½", "‚Ä‚¡", "‚Æ‚£", "‚Ä", "‚Æ",
+"‚¾", "‚Å‚¡", "‚Ç‚£", "‚Å", "‚Ç", "‚Ä‚ã", "‚Å‚ã",
+"‚¿‚á", "‚¿", "‚¿‚ã", "‚¿‚¥", "‚¿‚å", "‚Â‚Ÿ", "‚Â‚¡", "‚Â", "‚Â‚¥", "‚Â‚§",
+"‚È", "‚É", "‚Ê", "‚Ë", "‚Ì", "‚É‚á", "‚É‚ã", "‚É‚å",
+"‚Í", "‚Ð", "‚Ó", "‚Ö", "‚Ù", "‚Î", "‚Ñ", "‚Ô", "‚×", "‚Ú",
+"‚Ï", "‚Ò", "‚Õ", "‚Ø", "‚Û",
+"‚Ð‚á", "‚Ð‚ã", "‚Ð‚å",
+"‚Ñ‚á", "‚Ñ‚ã", "‚Ñ‚å",
+"‚Ò‚á", "‚Ò‚ã", "‚Ò‚å",
+"‚Ó‚Ÿ", "‚Ó‚¡", "‚Ó‚ã", "‚Ó‚¥", "‚Ó‚§",
+"‚Ü", "‚Ý", "‚Þ", "‚ß", "‚à",
+"‚Ý‚á", "‚Ý‚ã", "‚Ý‚å",
+"‚â", "‚ä", "‚æ",
+"‚ç", "‚è", "‚é", "‚ê", "‚ë",
+"‚è‚á", "‚è‚ã", "‚è‚å", "‚í", "‚¤‚¡", "‚¤‚¥", "‚¤‚§",
+"‚ñ\\", "‚ñm", "‚ñ", "‚ñj", "‚ñn"
+];
+PhoneticSymbols = PhoneticSymbols.reduce(function (o, v, i) {
+  o[v] = i;
+  return o;
+}, {});
+
+MikuEntity = new SoundEntity();
+// MikuEntity.doremi = [0x32, 0x72, 0x65, 0x5F, 0x19, 0x6F, 0x16];
+MikuEntity.doremi = [0x32, 0x32, 0x72, 0x72, 0x65, 0x5F, 0x5F, 0x19, 0x19, 0x6F, 0x6F, 0x16];
+MikuEntity.doremiMode = true;
+MikuEntity.prev = 0;
+MikuEntity.load = function() { // To avoid load error
+  return Promise.resolve();
+}
+MikuEntity.play = function(key, delay) {
+//  var tmps = scale & 0x0F;
+//  var semitone = this.diff[tmps];
+
+//  if ((scale & 0x80) != 0) semitone++;
+//  else if ((scale & 0x40) != 0) semitone--;
+  if (delay == undefined) delay = 0;
+//  var note = 0x42 + semitone; // 0x42 is F of C3 (or C4)
+  this.prev = key;
+
+  if (this.doremiMode) {
+    letter = this.doremi[key % 12];
+    MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0A,0x00,letter,0xF7]);
+  }
+  //this.sendNextChar();
+  MIDIOUT.send([0x90, key, 0x4F]);
+  if (this.off_flag)
+    MIDIOUT.send([0x80, key, 0x7F], window.performance.now() + 60 / CurScore.tempo * 1000 * 2);
+};
+MikuEntity.playChord = function(noteList, delay) {
+  this.play(noteList[0], 0);
+};
+MikuEntity.initLyric = function() {
+  this.lyric = document.getElementById("lyric").value;
+  this.idxL = 0; // Specify Nth character to sing
+  if (this.lyric == undefined || this.lyric == "") {
+    this.doremiMode = true;
+  } else {
+    this.doremiMode = false;
+    if (this.lyric.length < 65) this.sendThemAll();
+  }
+  this.off_flag = false;
+};
+MikuEntity.sendNextChar = function () {
+  var letter;
+  this.off_flag = false;
+
+  if (this.idxL >= this.lyric.length) this.idxL = 0;
+  letter = this.lyric[this.idxL++];
+  var n = this.lyric[this.idxL];
+  var nc = n.charCodeAt(0);
+  // If the next char is one of "‚Ÿ‚¡‚£‚¥‚§‚á‚ã‚å"
+  if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
+        nc & 1 == 1) {
+    letter += n;
+    this.idxL++;
+  } else if (n == "\n") {
+    this.off_flag = true;
+    this.idxL++;
+  }
+  console.log(letter);
+  letter = PhoneticSymbols[letter];
+  MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0A,0x00,letter,0xF7]);
+}
+MikuEntity.sendThemAll = function () {
+  var start = window.performance.now()
+  var letter;
+  this.off_flag = false;
+  var result = [];
+
+  while (this.idxL < this.lyric.length) {
+    letter = this.lyric[this.idxL++];
+    if (letter == '\n') continue;
+
+    var n = this.lyric[this.idxL];
+    var nc = n.charCodeAt(0);
+    // If the next char is one of "‚Ÿ‚¡‚£‚¥‚§‚á‚ã‚å"
+    if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
+          nc & 1 == 1) {
+      letter += n;
+      this.idxL++;
+    } else if (n == "\n") {
+      this.off_flag = true;
+      this.idxL++;
+    }
+    console.log(letter);
+    letter = PhoneticSymbols[letter];
+    result.push(letter);
+  }
+  var HEAD = [0xF0,0x43,0x79,0x09,0x11,0x0A,0x00];
+  var TAIL = 0xF7;
+  result = HEAD.concat(result);
+  result.push(TAIL);
+  MIDIOUT.send(result);
+  console.log("TIME = " + (window.performance.now() - start));
+};
+
+// MIDIEntity
+function MIDIEntity(channel, program) {
+  this.channel = channel;
+  this.program = program;
+  this.noteOn  = 0x90 | channel;
+  this.noteOff = 0x80 | channel;
+  // Channel 0 is specific for Miku. Channel 10 is specific for Drum map.
+  if (channel == 0 || channel == 10) return;
+  MIDIOUT.send([0xC0 | channel, program]);
+}
+MIDIEntity.prototype = new SoundEntity();
+MIDIEntity.prototype.constructor = MIDIEntity;
+MIDIEntity.prototype.play = function (key, delay) {
+  if (delay == undefined) delay = 0;
+  MIDIOUT.send([this.noteOn, key, 0x7F]);
+};
+MIDIEntity.prototype.playChord = function (noteList, delay) {
+  for (var i = 0; i < this.prevChord.length; i++) {
+    MIDIOUT.send([this.noteOff, this.prevChord[i], 0x7F]);
+  }
+  this.prevChord = [];
+  if (delay == undefined) delay = 0;
+  for (var i = 0; i < noteList.length; i++) {
+    var key = noteList[i];
+    MIDIOUT.send([this.noteOn, key, 0x7F]);
+    this.prevChord.push(key);
+  }
+};
+
+// Factory of Runner Class
+function createRunner(name) {
+  var mario = {
+    checkJump: function () {
+      var notes = CurScore.notes[this.pos - 1];
+      if (notes == undefined || notes.length == 0) {
+        this.isJumping = false;
+      } else if (notes.length == 1) {
+        this.isJumping = (typeof notes[0] != 'string');
+      } else
+        this.isJumping = true;
+    },
+    draw: function () {
+      var y = (41 - 22);
+      var state = this.state
+      if (this.isJumping) {
+        state = 2;
+        if (this.x == 120) { // In scroll mode
+          // (scroll == 16) is just on the bar, 0 and 32 is on the center of between bars
+          if (this.scroll != 16) {
+            y -= this.jump(this.scroll > 16 ? this.scroll - 16 : this.scroll + 16);
+          } /* if scroll == 16 then Mario should be on the ground */
+        } else { // Running to the center, or leaving to the goal
+          y -= this.jump(Math.round((this.x - 8) % 32));
+        }
+      }
+
+      L2C.drawImage(this.images[state], this.x * MAGNIFY, y * MAGNIFY);
+    },
+    leave: function(timeStamp) {
+      if (this.start == 0) this.start = timeStamp;
+
+      var diff = timeStamp - this.start;
+      if (this.scroll > 0 && this.scroll < 32) {
+        this.scroll += Math.floor(diff / 4);
+        if (this.scroll > 32) {
+          this.x += this.scroll - 32;
+          this.scroll = 0;
+          CurPos++;
+        }
+      } else
+        this.x = Math.floor(diff / 4) + this.offset;
+
+      if (Math.floor(diff / 100) % 2 == 0) {
+        this.state =  8;
+        this.draw();
+        var w = sweatimg.width;
+        var h = sweatimg.height;
+        L2C.drawImage(sweatimg,
+            0, 0, w, h,
+            (this.x - (w + 1)) * MAGNIFY, (41 - 22) * MAGNIFY,
+            w * MAGNIFY, h * MAGNIFY);
+      } else {
+        this.state = 9;
+        this.draw();
+      }
+    }
+  };
+
+  var miku = {
+    checkJump: function () {this.isJumping = false;},
+    draw: function () {
+      var y = 41 - 28;
+      L2C.drawImage(this.images[this.state], this.x * MAGNIFY, y * MAGNIFY);
+    },
+    leave: function (timeStamp) {
+      if (this.start == 0) this.start = timeStamp;
+
+      var diff = timeStamp - this.start;
+      if (this.scroll > 0 && this.scroll < 32) {
+        this.scroll += Math.floor(diff / 4);
+        if (this.scroll > 32) {
+          this.x += this.scroll - 32;
+          this.scroll = 0;
+          CurPos++;
+        }
+      } else
+        this.x = Math.floor(diff / 4) + this.offset;
+
+      this.timer.checkAndFire(timeStamp);
+      this.draw();
+    }
+  };
+
+  var runner = new RunnerClass();
+  var obj = (name == "Miku") ? miku : mario;
+  for (var k in obj) {
+    runner[k] = obj[k];
+  }
+  if (name == "Miku") {
+    runner.setTimer(new easyTimer(100, function(timer) {
+      var state = Runner.state;
+      if (++state >= 6) state = 0;
+      Runner.state = state;
+    }));
+  } else {
+    runner.setTimer(new easyTimer(100, function(timer) {
+      Runner.state = (Runner.state == 1) ? 0 : 1;
+    }));
+  }
+  return runner;
+}
+
+// Runner Class. Mario or Miku will inherit from this
+function RunnerClass() {
   this.offset = -16; // offset in X
   this.scroll = 0;   // Scroll amount in dots
   this.x = -16;      // X-position in dots.
   this.images = null;
   this.pos = 0;      // position in bar number
+  this.state = 0;    // Index of Runner's images
 }
 
-MarioClass.prototype.init = function() {
+RunnerClass.prototype.init = function() {
   this.x = -16;
   this.pos = 0;
   this.start = 0;
   this.state = 0;
   this.scroll = 0;
   this.offset = -16;
-  this.timer = new easyTimer(100, function(timer) {
-    Mario.state = (Mario.state == 1) ? 0 : 1;
-  });
-  this.timer.switch = true; // forever true;
+  //this.timer = new easyTimer(100, function(timer) {
+  //  Runner.state = (Runner.state == 1) ? 0 : 1;
+  //});
+  //this.timer.switch = true; // forever true;
   this.isJumping = false;
 };
 
-MarioClass.prototype.enter = function(timeStamp) {
+// setTimer: set timer instance
+// Detached from init so that Mario and Miku can use
+// a different timer instance.
+RunnerClass.prototype.setTimer = function(t) {
+  this.timer = t;
+  t.switch = true;
+}
+
+RunnerClass.prototype.enter = function(timeStamp) {
   if (this.start == 0) this.start = timeStamp;
 
   var diff = timeStamp - this.start;
   this.x = Math.floor(diff / 5) + this.offset;
   if (this.x >= 40) this.x = 40; // 16 + 32 - 8
-  if (Math.floor(diff / 100) % 2 == 0) {
-    this.state = 1;
-  } else {
-    this.state = 0;
-  }
+  this.timer.checkAndFire(timeStamp);
   this.draw();
 };
 
-MarioClass.prototype.init4leaving = function() {
+RunnerClass.prototype.init4leaving = function() {
   this.offset = this.x;
   this.start = 0;
   this.isJumping = false;
@@ -227,26 +620,16 @@ MarioClass.prototype.init4leaving = function() {
  * Mario should jump from one bar before the next bar which has the note(s)
  *
  */
-MarioClass.prototype.init4playing = function(timeStamp) {
+RunnerClass.prototype.init4playing = function(timeStamp) {
   this.lastTime = timeStamp;
   this.offset = this.x;
   this.scroll = 0;
   this.pos = 1;
   this.state == 1;
-  this.checkMarioShouldJump();
+  this.checkJump();
 };
 
-MarioClass.prototype.checkMarioShouldJump = function() {
-  var notes = CurScore.notes[this.pos - 1];
-  if (notes == undefined || notes.length == 0) {
-    this.isJumping = false;
-  } else if (notes.length == 1) {
-    this.isJumping = (typeof notes[0] != 'string');
-  } else
-    this.isJumping = true;
-};
-
-MarioClass.prototype.play = function(timeStamp) {
+RunnerClass.prototype.play = function(timeStamp) {
   // function for setting a chord to SoundEntities and playing it
   function scheduleAndPlay(notes, time) {
     if (time < 0) time = 0;
@@ -263,10 +646,13 @@ MarioClass.prototype.play = function(timeStamp) {
         continue;
       }
 
-      var num = note >> 8;
-      var scale = note & 0xFF;
-      if  (!dic[num]) dic[num] = [scale];
-      else dic[num].push(scale);
+      //var num = note >> 8;
+      //var scale = note & 0xFF;
+      var a = decodeNote(note);
+      var num = a[0];
+      var key = a[1];
+      if  (!dic[num]) dic[num] = [key];
+      else dic[num].push(key);
     }
     for (var i in dic) {
       SOUNDS[i].playChord(dic[i], time / 1000); // [ms] -> [s]
@@ -283,13 +669,13 @@ MarioClass.prototype.play = function(timeStamp) {
   var scroll = document.getElementById('scroll');
 
   var nextBar = (16 + 32 * (this.pos - CurPos + 1) - 8);
-  if (Mario.x < 120) { // Mario still has to run
-    this.x += step; 
+  if (Runner.x < 120) { // Mario still has to run
+    this.x += step;
     // If this step crosses the bar
     if (this.x >= nextBar) {
       this.pos++;
       scheduleAndPlay(CurScore.notes[this.pos - 2], 0); // Ignore diff
-      this.checkMarioShouldJump();
+      this.checkJump();
     } else {
       // 32 dots in t[sec/1beat]
       if (this.x >= 120) {
@@ -297,13 +683,13 @@ MarioClass.prototype.play = function(timeStamp) {
         this.x = 120;
       }
     }
-  } else if (CurPos <= CurScore.end - 6) { // Scroll 
+  } else if (CurPos <= CurScore.end - 6) { // Scroll
     this.x = 120;
-    if (this.scroll < 16 && (this.scroll + step) > 16) {
+    if (this.scroll < 16 && (this.scroll + step) >= 16) {
       this.pos++;
       this.scroll += step;
       scheduleAndPlay(CurScore.notes[this.pos - 2], 0); // Ignore error
-      this.checkMarioShouldJump();
+      this.checkJump();
     } else {
       this.scroll += step;
       if (this.scroll > 32) {
@@ -322,7 +708,7 @@ MarioClass.prototype.play = function(timeStamp) {
     if (this.x >= nextBar) {
       this.pos++;
       scheduleAndPlay(CurScore.notes[this.pos - 2], 0); // Ignore diff
-      this.checkMarioShouldJump();
+      this.checkJump();
     }
   }
   drawScore(CurPos, CurScore.notes, this.scroll);
@@ -330,57 +716,12 @@ MarioClass.prototype.play = function(timeStamp) {
 };
 
 // Mario Jump
-MarioClass.prototype.jump = function(x) {
+RunnerClass.prototype.jump = function(x) {
   var h = [0, 2, 4, 6, 8, 10, 12, 13, 14, 15, 16, 17, 18, 18, 19, 19, 19,
            19, 19, 18, 18, 17, 16, 15, 14, 13, 12, 10, 8, 6, 4, 2, 0];
   return h[Math.round(x) % 32];
 }
 
-MarioClass.prototype.draw = function() {
-  var y = (41 - 22);
-  var state = this.state
-  if (this.isJumping) {
-    state = 2;
-    if (this.x == 120) { // In scroll mode
-      // (scroll == 16) is just on the bar, 0 and 32 is on the center of between bars
-      if (this.scroll != 16) {
-        y -= this.jump(this.scroll > 16 ? this.scroll - 16 : this.scroll + 16);
-      } /* if scroll == 16 then Mario should be on the ground */
-    } else { // Running to the center, or leaving to the goal
-      y -= this.jump(Math.round((this.x - 8) % 32));
-    }
-  }
-   
-  L2C.drawImage(this.images[state], this.x * MAGNIFY, y * MAGNIFY);
-};
-
-MarioClass.prototype.leave = function(timeStamp) {
-  if (this.start == 0) this.start = timeStamp;
-
-  var diff = timeStamp - this.start;
-  if (this.scroll > 0 && this.scroll < 32) {
-    this.scroll += Math.floor(diff / 4); 
-    if (this.scroll > 32) {
-      this.x += this.scroll - 32;
-      this.scroll = 0;
-      CurPos++;
-    }
-  } else
-    this.x = Math.floor(diff / 4) + this.offset;
-  if (Math.floor(diff / 100) % 2 == 0) {
-    this.state =  8;
-    this.draw();
-    var w = sweatimg.width;
-    var h = sweatimg.height;
-    L2C.drawImage(sweatimg,
-        0, 0, w, h,
-        (this.x - (w + 1)) * MAGNIFY, (41 - 22) * MAGNIFY,
-        w * MAGNIFY, h * MAGNIFY);
-  } else {
-    this.state = 9;
-    this.draw();
-  }
-};
 
 // Timer
 function easyTimer(time, func) {
@@ -397,7 +738,15 @@ easyTimer.prototype.checkAndFire = function(time) {
   }
 };
 
-// Asynchronous load of sounds
+// SOUNDS is an array for SoundEntity.
+// WAV files come first and load wav files async.
+// SOUNDS will have MIDI entity later. They don't need loading.
+// SOUNDS is now not only an array for sound entitiies,
+// but also for characters. CurChar has a index of SOUNDS
+// for a Current (selected) Character. This means that eatch SoundEntity
+// should have its character image and mini image.
+// End Mark and Eraser should have an index of out of SOUNDS for
+// convinience. Images for them will be kept by their buttons.
 SOUNDS = [];
 for (i = 1; i < 21; i++) {
   var tmp = '0';
@@ -423,12 +772,16 @@ mi.onload = function() {
 char_sheet = new Image();
 char_sheet.src = "image/character_sheet.png";
 
+// Prepare mini Characters
+minicimg = new Image();
+minicimg.src = "image/minichars.png";
+
 // Prepare the Bomb!
 BOMBS = []
 bombimg = new Image();
 bombimg.src = "image/bomb.png";
 bombTimer = new easyTimer(150, drawBomb);
-bombTimer.switch = true; // always true for the bomb
+bombTimer.switch = true;
 bombTimer.currentFrame = 0;
 
 function drawBomb(mySelf) {
@@ -436,16 +789,8 @@ function drawBomb(mySelf) {
   var y = 202 * MAGNIFY;
   var img = BOMBS[mySelf.currentFrame];
   L1C.drawImage(img, x, y);
-  switch (mySelf.currentFrame) {
-    case 0:
-      mySelf.currentFrame = 1;
-      break;
-    case 1:
-      mySelf.currentFrame = 0;
-      break;
-    case 2:
-      break;
-  }
+  mySelf.currentFrame = (mySelf.currentFrame == 0) ? 1 : 0;
+
   if (CurSong == undefined || GameStatus != 2) return;
   CurSong.style.backgroundImage =
     "url(" + CurSong.images[mySelf.currentFrame + 1].src + ")";
@@ -465,6 +810,14 @@ marioimg.src = "image/Mario.png";
 
 sweatimg = new Image();
 sweatimg.src = "image/mario_sweat.png";
+
+// Prepare the Miku images
+mikuimg = new Image();
+mikuimg.src = "image/miku.png";
+
+// Prepare the Eggman images
+eggimg = new Image();
+eggimg.src = "image/eggman.png";
 
 // Prepare the Play button
 playbtnimg = new Image();
@@ -578,12 +931,12 @@ function drawScore(pos, notes, scroll) {
 
     // Get notes down
     var delta = 0;
-    if (GameStatus == 2  && Mario.pos - 2 == barnum) {
+    if (GameStatus == 2  && Runner.pos - 2 == barnum) {
       var idx;
-      if (Mario.x == 120) {
-        idx = (Mario.scroll >= 16) ? Mario.scroll - 16 : Mario.scroll + 16;
+      if (Runner.x == 120) {
+        idx = (Runner.scroll >= 16) ? Runner.scroll - 16 : Runner.scroll + 16;
       } else {
-        idx = Mario.x + 8 - xorg;
+        idx = Runner.x + 8 - xorg;
       }
       var tbl = [0, 1, 2, 3, 3, 4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 8,
                  8, 8, 8, 8, 8, 7, 7, 6, 6, 5, 5, 4, 3, 3, 2, 1, 0];
@@ -593,11 +946,16 @@ function drawScore(pos, notes, scroll) {
     for (var j = 0; j < b.length; j++) {
       if (typeof b[j] == "string") continue; // for dynamic TEMPO
 
-      var sndnum = b[j] >> 8;
-      var scale  = b[j] & 0x0F;
+//      var sndnum = b[j] >> 8;
+//      var scale  = b[j] & 0x0F;
+      var a = decodeNote(b[j]);
+      var sndnum = a[0];
+      var key    = a[1];
+      var isFlat = a[2];
+      var scale  = key2GridY(a[1], isFlat);
       // When CurChar is eraser, and the mouse cursor is on the note,
       // an Image of note blinks.
-      if (CurChar == 16 && g != false && i == gridX && scale == gridY &&
+      if (CurChar == ERASERIDX && g != false && i == gridX && scale == gridY &&
           eraserTimer.currentFrame == 1) {continue;}
 
       if (!hflag && (scale >= 11)) {
@@ -609,10 +967,10 @@ function drawScore(pos, notes, scroll) {
 
       var x2 = (x - 13 * MAGNIFY);
       var y = (44 + scale * 8 + delta) * MAGNIFY;
-      if ((b[j] & 0x80) != 0) {
-        L2C.drawImage(Semitones[0], x2, y);
-      } else if ((b[j] & 0x40) != 0) {
+      if (isFlat) {
         L2C.drawImage(Semitones[1], x2, y);
+      } else if (isEbony(key)) {
+        L2C.drawImage(Semitones[0], x2, y);
       }
     }
   }
@@ -679,14 +1037,14 @@ function drawEndMarkIcon(img) {
   L1C.drawImage(img, 5 * MAGNIFY, 8 * MAGNIFY);
 }
 // Draw Eraser Icon
-// In fact, this only erases Icon 
+// In fact, this only erases Icon
 function drawEraserIcon() {
   L1C.clearRect(4 * MAGNIFY, 8 * MAGNIFY, 16 * MAGNIFY, 14 * MAGNIFY);
 }
 
 function toGrid(realX, realY) {
   var gridLeft   = (8   + 0) * MAGNIFY;
-  var gridTop    = (41     ) * MAGNIFY;
+  var gridTop    = (41  + 2) * MAGNIFY;
   var gridRight  = (247 - 4) * MAGNIFY;
   var gridBottom = (148 - 4) * MAGNIFY;
   if (realX < gridLeft || realX > gridRight ||
@@ -738,7 +1096,7 @@ function mouseClickListener(e) {
   var b = CurPos + gridX - 2;
 
   // process End Mark
-  if (CurChar == 15) {
+  if (CurChar == ENDMARKIDX) {
     CurScore.end = b;
     return;
   }
@@ -747,27 +1105,28 @@ function mouseClickListener(e) {
 
   var notes = CurScore['notes'][b];
   // Delete
-  if (CurChar == 16 || e.button == 2) {
+  if (CurChar == ERASERIDX || e.button == 2) {
     // Delete Top of the stack
     for (var i = notes.length - 1; i >= 0; i--) {
-      if ((notes[i] & 0x3F) == gridY) {
+      var a = decodeNote(notes[i]);
+      var note = a[1];
+      var isFlat = a[2];
+      if (key2GridY(note, isFlat) == gridY) {
         notes.splice(i, 1);
         CurScore.notes[b] = notes;
-        SOUNDS[17].play(8);
+        SysSnd.click.play(65);
         break;
       }
     }
     return;
   }
 
-  var note = (CurChar << 8) | gridY;
-  if (notes.indexOf(note) != -1) return;
-  //
   // Handle semitone
-  if (e.shiftKey) gridY |= 0x80;
-  if (e.ctrlKey ) gridY |= 0x40;
-  SOUNDS[CurChar].play(gridY);
-  note = (CurChar << 8) | gridY;
+  var isFlat = (e.ctrlKey )
+//  note = (CurChar << 8) | gridY;
+  var note = encodeNote(gridY, CurChar, e.shiftKey, e.ctrlKey, 0);
+  SOUNDS[CurChar].play(note & 0x7F);
+  if (notes.indexOf(note) != -1) return; // Already have it.
   notes.push(note);
   CurScore['notes'][b] = notes;
 }
@@ -787,7 +1146,7 @@ SCREEN.addEventListener("dragover", function(e) {
 // Translate dropped MSQ files into inner SCORE array.
 // You have to handle each file sequencially,
 // But you might want to download files parallel.
-// In such a case, Promise is very convinient utility.
+// In such a case, Promise is very convenient utility.
 // http://www.html5rocks.com/en/tutorials/es6/promises/
 SCREEN.addEventListener("drop", function(e) {
   e.preventDefault();
@@ -803,7 +1162,7 @@ SCREEN.addEventListener("drop", function(e) {
       reader.addEventListener("load", function(e) {
         resolve(e.target);
       });
-      reader.readAsText(file, 'shift-jis');
+      reader.readAsText(file);
     });
   }
 
@@ -844,7 +1203,7 @@ SCREEN.addEventListener("drop", function(e) {
 });
 
 // Closing to add files to the score
-//   Configure Score parameters 
+//   Configure Score parameters
 function closing() {
   // Finally, after reducing, set parameters to Score
   var b = document.getElementById(CurScore.beats == 3 ? '3beats' : '4beats');
@@ -867,8 +1226,8 @@ function closing() {
 }
 
 function addMSQ(text) {
-  lines = text.split(/\r\n|\r|\n/);
-  keyword = ["SCORE", "TEMPO", "LOOP", "END", "TIME44"];
+  var lines = text.split(/\r\n|\r|\n/);
+  var keyword = ["SCORE", "TEMPO", "LOOP", "END", "TIME44"];
   var values = {};
   lines.forEach(function(line, i) {
     if (line === "") return;
@@ -880,7 +1239,7 @@ function addMSQ(text) {
     }
     this[k] = v;
   }, values);
-  
+
   var oldEnd = CurScore.end;
   var s = values.SCORE;
   var i = 0, count = CurScore.end;
@@ -894,7 +1253,8 @@ function addMSQ(text) {
       if (scale !== 0) {
         scale -= 1;
         var tone = parseInt(s[i++], 16) - 1;
-        var note = (tone << 8) | scale;
+//        var note = (tone << 8) | scale;
+        var note = encodeNote(scale, tone);
         bar.push(note);
       }
     }
@@ -908,7 +1268,7 @@ function addMSQ(text) {
   var beats = (values.TIME44 == "TRUE") ? 4 : 3;
   CurScore.beats = beats;
   // click listener will set CurScore.loop
-  b = document.getElementById("loop");
+  var b = document.getElementById("loop");
   (values.LOOP == "TRUE") ? b.set() : b.reset();
 }
 
@@ -930,11 +1290,13 @@ function addJSON(text) {
     }
   }
   CurScore.tempo = json.tempo;
-
   CurScore.end += json.end;
 
-  b = document.getElementById("loop");
-  if (CurScore.loop) b.set; else b.reset();
+  var b = document.getElementById("loop");
+  if (json.loop) b.set(); else b.reset();
+
+  var b = document.getElementById("lyric");
+  if (json.lyric) b.value = json.lyric;
 }
 
 function doAnimation(time) {
@@ -1002,7 +1364,9 @@ function resizeScreen() {
 
   BOMBS = sliceImage(bombimg, 14, 18);
   Mario.images = sliceImage(marioimg, 16, 22);
+  Miku.images = sliceImage(mikuimg, 20, 28);
   Semitones = sliceImage(semitoneimg, 5, 12);
+  EGGMAN.images = sliceImage(eggimg, 16, 16);
 
   MAT.width  = ORGWIDTH  * MAGNIFY;
   MAT.height = ORGHEIGHT * MAGNIFY;
@@ -1012,27 +1376,35 @@ function resizeScreen() {
   SCREEN.height = SCRHEIGHT * MAGNIFY;
 
   var imgs = sliceImage(char_sheet, 16, 16);
+  var mini = sliceImage(minicimg, 11, 12);
+  for (var i = 0; i < 31; i++) { // NEED FIX when you get more MIDI notes
+    SOUNDS[i].image = imgs[i];
+    SOUNDS[i].minic = mini[i];
+  }
   for (var i = 0; i < BUTTONS.length; i++) {
     var b = BUTTONS[i];
     b.redraw();
-    if (i < 15) b.se.image = imgs[i];
+    if (i < 15) {
+      b.drawChar();
+    }
   }
   BUTTONS[15].images = sliceImage(endimg, 14, 13);
   endMarkTimer.images = BUTTONS[15].images;
+  EGGMAN.draw();
 
-  // Endmark Cursor (= 15) will be redrawn by its animation
-  // Eraser (= 16) will be redrawn later below
-  if (CurChar < 15) {
+  // Endmark Cursor (= ENDMARKIDX) will be redrawn by its animation
+  // Eraser (= ERASERIDX) will be redrawn later below
+  if (CurChar >= 0 && CurChar < SOUNDS.length) {
    changeCursor(CurChar);
   }
 
-  if (CurChar == 15)
+  if (CurChar == ENDMARKIDX)
     drawEndMarkIcon(BUTTONS[15].images[0]);
-  else if (CurChar == 16)
-    drawEraserIcon(); 
+  else if (CurChar == ERASERIDX)
+    drawEraserIcon();
   else
     drawCurChar(SOUNDS[CurChar].image);
-  
+
   var b = document.getElementById("play");
   b.redraw();
   b.images = sliceImage(playbtnimg, 12, 15);
@@ -1050,7 +1422,7 @@ function resizeScreen() {
   b.images = [imgs[2], imgs[3]]; // made in Stop button (above)
   var num = CurScore.loop ? 1 : 0;
   b.style.backgroundImage = "url(" + b.images[num].src + ")";
-  
+
   // Prepare Repeat (global!)
   RepeatMarks = sliceImage(repeatimg, 13, 62);
   EndMark = RepeatMarks[2];
@@ -1116,7 +1488,7 @@ function resizeScreen() {
   b.redraw();
   b.images = [imgs[9], imgs[10], imgs[11]];
   var num;
-  if (CurChar == 16) {
+  if (CurChar == ERASERIDX) {
     num = 1;
     SCREEN.style.cursor = 'url(' + b.images[2].src + ')' + ' 0 0, auto';
   } else {
@@ -1148,20 +1520,27 @@ function resizeScreen() {
 window.addEventListener("load", onload);
 function onload() {
   // Make buttons for changing a kind of notes.
-  //   1st mario:   x=24, y=8, width=13, height=14
-  //   2nd Kinopio: X=38, y=8, width=13, height=14
+  //   1st mario:   x=25, y=9, width=11, height=12
+  //   2nd Kinopio: X=39, y=9, width=11, height=12
   //   and so on...
   var bimgs = sliceImage(char_sheet, 16, 16);
+  var minis = sliceImage(minicimg, 11, 12);
   for (var i = 0; i < 15; i++) {
-    var b = makeButton((24 + 14 * i), 8, 13, 14);
-    b.num = i;
+    var b = makeButton((25 + 14 * i), 9, 11, 12);
     b.se = SOUNDS[i];
+    b.se.num = i;
     b.se.image = bimgs[i];
+    b.se.minic = minis[i];
+    b.drawChar = function() {
+      // this.style.backgroundImage = "url(" + this.se.minic.src + ")";
+      L1C.drawImage(this.se.minic, this.originalX * MAGNIFY, this.originalY * MAGNIFY);
+    };
+    b.drawChar();
     b.addEventListener("click", function() {
-      this.se.play(8); // Note F
-      CurChar = this.num;
+      this.se.play(65); // Note F
+      CurChar = this.se.num;
       clearEraserButton();
-      changeCursor(this.num);
+      changeCursor(this.se.num);
       drawCurChar(this.se.image);
     });
     CONSOLE.appendChild(b);
@@ -1169,11 +1548,11 @@ function onload() {
   }
 
   // Prepare End Mark button (Char. No. 15)
-  var b = makeButton(235, 8, 13, 14);
+  var b = makeButton(67, 203, 13, 14);
   b.images = sliceImage(endimg, 14, 13); // Note: Different size from the button
   endMarkTimer = new easyTimer(150, function (self) {
     // If current is not end mark, just return;
-    if (CurChar != 15) {
+    if (CurChar != ENDMARKIDX) {
       self.switch = false;
       return;
     }
@@ -1185,13 +1564,43 @@ function onload() {
   endMarkTimer.currentFrame = 0;
   b.addEventListener("click", function() {
     endMarkTimer.switch = true;
-    CurChar = 15;
-    SOUNDS[15].play(8);
+    CurChar = ENDMARKIDX;
+    SysSnd.endmark.play(65);
     clearEraserButton();
     drawEndMarkIcon(this.images[0]);
   });
   CONSOLE.appendChild(b);
   BUTTONS[15] = b;
+
+  // Prepare Eggman Button
+  EGGMAN = makeButton(236, 6, 16, 16);
+  EGGMAN.id = "eggman";
+  EGGMAN.images = sliceImage(eggimg, 16, 16);
+  EGGMAN.current = 1;
+  EGGMAN.startIdx = function() {
+    return (this.current % 2 == 1) ? 0 : 15;
+  }
+  EGGMAN.draw = function() {
+    this.style.backgroundImage = "url(" + this.images[this.current].src + ")";
+  };
+  EGGMAN.draw();
+  EGGMAN.addEventListener("click", function() {
+    SOUNDS[12].play(60 + this.current);
+    var curchar = CurChar - BUTTONS[0].se.num;
+    this.current++;
+    if (this.current > 15) {this.current = 1};
+    this.draw();
+    var begin = this.startIdx();
+    for (var i = 0; i < 15; i++) {
+      BUTTONS[i].se = SOUNDS[begin + i];
+      BUTTONS[i].drawChar();
+    }
+    CurChar = begin + curchar;
+    drawCurChar(SOUNDS[CurChar].image);
+    changeCursor(SOUNDS[CurChar].num);
+  });
+  CONSOLE.appendChild(EGGMAN);
+  BUTTONS[16] = EGGMAN;
 
   // For inserting pseudo elements' styles
   var s = document.createElement("style");
@@ -1204,7 +1613,7 @@ function onload() {
   b.images = sliceImage(playbtnimg, 12, 15);
   b.style.backgroundImage = "url(" + b.images[0].src + ")";
   b.addEventListener("click", playListener);
-  s.sheet.insertRule('#play:focus {outline: none !important;}', 0);
+  s.sheet.insertRule('button:focus {outline: none !important;}', 0);
   CONSOLE.appendChild(b);
 
   // Prepare Stop Button (21, 168)
@@ -1220,7 +1629,7 @@ function onload() {
   CONSOLE.appendChild(b);
 
   // Prepare Loop Button (85, 168)
-  var b = makeButton(85, 168, 16, 15); 
+  var b = makeButton(85, 168, 16, 15);
   b.id = 'loop';
   b.images = [imgs[2], imgs[3]]; // made in Stop button (above)
   b.style.backgroundImage = "url(" + b.images[0].src + ")";
@@ -1235,7 +1644,7 @@ function onload() {
       num = 1;
     }
     this.style.backgroundImage = "url(" + this.images[num].src + ")";
-    SOUNDS[17].play(8);
+    SysSnd.click.play(65);
   });
   b.reset = function () {
     CurScore.loop = false;
@@ -1307,7 +1716,7 @@ function onload() {
 
     return function(e) {
       // Sound Off for file loading
-      if (!e.soundOff) SOUNDS[17].play(8);
+      if (!e.soundOff) SysSnd.click.play(65);
       self.disabled = true;
       self.style.backgroundImage = "url(" + self.images[1].src + ")";
       theOthers.map(function (x) {
@@ -1371,7 +1780,7 @@ function onload() {
   b.style.backgroundImage = "url(" + b.images[0].src + ")";
   eraserTimer = new easyTimer(200, function (self) {
     // If current is not end mark, just return;
-    if (CurChar != 16) {
+    if (CurChar != ERASERIDX) {
       self.switch = false;
       return;
     }
@@ -1380,8 +1789,8 @@ function onload() {
   eraserTimer.currentFrame = 0;
   b.addEventListener("click", function() {
     eraserTimer.switch = true;
-    CurChar = 16;
-    SOUNDS[17].play(8);
+    CurChar = ERASERIDX;
+    SysSnd.click.play(65);
     drawEraserIcon();
     clearSongButtons();
     this.style.backgroundImage = "url(" + this.images[1].src + ")";
@@ -1475,10 +1884,50 @@ function onload() {
 
   // Make bomb images from the bomb sheet
   BOMBS = sliceImage(bombimg, 14, 18);
+  var b = makeButton(9, 202, 14, 18);
+  BUTTONS[17] = b;
+  b.id = 'bomb';
+  b.addEventListener("click", function(e) {
+    bombTimer.switch = false;
+    // Play booom
+    var source = AC.createBufferSource();
+    source.buffer = SysSnd.bomb.buffer;
+    source.playbackRate.value = Math.pow(SEMITONERATIO, -24);
+    source.connect(AC.destination);
+    source.onended = function () {
+      bombTimer.switch = true;
+    };
+    source.start(0);
+    // Change background
+    var x = 9 * MAGNIFY;
+    var y = 202 * MAGNIFY;
+    var img = BOMBS[2];
+    L1C.drawImage(img, x, y);
+    // Change Runner, Mario to Miku or vice versa
+    var prev;
+    if (Runner === Miku) {
+      Runner = Mario;
+      prev   = Miku;
+    } else {
+      Runner = Miku;
+      prev   = Mario;
+    }
+    Runner.x = prev.x;
+    Runner.pos = prev.pos;
+    Runner.scroll = prev.scroll;
+    Runner.offset = prev.offset;
+    Runner.lastTime = prev.lastTime;
+  });
+  CONSOLE.appendChild(b);
 
   // Make Mario images
-  Mario = new MarioClass();
+  Mario = createRunner("Mario");
   Mario.images = sliceImage(marioimg, 16, 22);
+
+  // Make Miku images
+  Miku = createRunner("Miku");
+  Miku.images = sliceImage(mikuimg, 20, 28);
+  Runner = Miku;
 
   // Make Semitone images
   Semitones = sliceImage(semitoneimg, 5, 12);
@@ -1488,6 +1937,23 @@ function onload() {
     all.map(function (buffer, i) {
       SOUNDS[i].buffer = buffer;
     });
+    // Save system sounds
+    SysSnd.endmark = SOUNDS[15];
+    SysSnd.bomb    = SOUNDS[16];
+    SysSnd.click   = SOUNDS[17];
+    SysSnd.undo    = SOUNDS[18];
+    SysSnd.clear   = SOUNDS[19];
+    // Overwrite from 15 for convinience
+    SOUNDS[15] = MikuEntity;
+    SOUNDS[15].num = 15;
+    SOUNDS[15].image = bimgs[15];
+    SOUNDS[15].minic = minis[15];
+    for (var i = 16; i < 31; i++) {
+      SOUNDS[i] = new MIDIEntity(i - 15, (i - 16) * 8);
+      SOUNDS[i].num = i;
+      SOUNDS[i].image = bimgs[i];
+      SOUNDS[i].minic = minis[i];
+    }
 
     CONSOLE.removeChild(document.getElementById("spinner"));
 
@@ -1518,8 +1984,8 @@ function onload() {
           addMSQ(response);
         else
           addJSON(response);
-        
-        closing(); 
+
+        closing();
 
         autoPlayIfDemanded(OPTS);
 
@@ -1558,7 +2024,7 @@ function onload() {
     console.error("Invalid GET parameter :" + err.stack);
   });
 
-  requestAnimFrame(doAnimation); 
+  requestAnimFrame(doAnimation);
 
   var b = document.getElementById("magnify");
   b.addEventListener("change", selectListener);
@@ -1575,7 +2041,7 @@ function autoPlayIfDemanded(opts) {
 // Clear Button Listener
 function clearListener(e) {
   this.style.backgroundImage = "url(" + this.images[1].src + ")";
-  SOUNDS[19].play(8);
+  SysSnd.clear.play(65);
   var self = this;
   function makePromise(num) {
     return new Promise(function(resolve, reject) {
@@ -1601,7 +2067,7 @@ function clearListener(e) {
 // Play Button Listener
 function playListener(e) {
   this.style.backgroundImage = "url(" + this.images[1].src + ")";
-  SOUNDS[17].play(8);
+  SysSnd.click.play(65);
   var b = document.getElementById("stop");
   b.style.backgroundImage = "url(" + b.images[0].src + ")";
   b.disabled = false;
@@ -1610,56 +2076,60 @@ function playListener(e) {
   ["toLeft", "toRight", "scroll", "clear", "frog", "beak", "1up"].
     map(function (id) {document.getElementById(id).disabled = true;});
 
+  // Clear MIDI condition
+  if (MIDIOUT) MIDIOUT.stopAll();
+
   GameStatus = 1; // Mario Entering the stage
   CurPos = 0;     // doAnimation will draw POS 0 and stop
-  Mario.init();
-  requestAnimFrame(doMarioEnter);
+  Runner.init();
+  MikuEntity.initLyric();
+  requestAnimFrame(doRunnerEnter);
 }
 
 // Stop Button Listener
 function stopListener(e) {
   this.style.backgroundImage = "url(" + this.images[1].src + ")";
-  // Sound ON: click , OFF: called by doMarioPlay
-  if (e != undefined) SOUNDS[17].play(8);
+  // Sound ON: click , OFF: called by doRunnerPlay
+  if (e != undefined) SysSnd.click.play(65);
   var b = document.getElementById("play");
   b.style.backgroundImage = "url(" + b.images[0].src + ")";
   //b.disabled = false; // Do after Mario left the stage
   this.disabled = true; // Would be unlocked by play button
 
   GameStatus = 3; // Mario leaves from the stage
-  Mario.init4leaving();
+  Runner.init4leaving();
   if (AnimeID != 0) cancelAnimationFrame(AnimeID);
-  requestAnimFrame(doMarioLeave);
+  requestAnimFrame(doRunnerLeave);
 }
 
 // Let Mario run on the stage
-function doMarioEnter(timeStamp) {
+function doRunnerEnter(timeStamp) {
   bombTimer.checkAndFire(timeStamp);
   drawScore(0, CurScore.notes, 0);
-  Mario.enter(timeStamp);
+  Runner.enter(timeStamp);
 
-  if (Mario.x < 40) {
-    AnimeID = requestAnimFrame(doMarioEnter);
+  if (Runner.x < 40) {
+    AnimeID = requestAnimFrame(doRunnerEnter);
   } else {
-    Mario.init4playing(timeStamp);
+    Runner.init4playing(timeStamp);
     GameStatus = 2;
-    AnimeID = requestAnimFrame(doMarioPlay);
+    AnimeID = requestAnimFrame(doRunnerPlay);
   }
 }
 
 // Let Mario play the music!
-function doMarioPlay(timeStamp) {
+function doRunnerPlay(timeStamp) {
   bombTimer.checkAndFire(timeStamp);
-  Mario.play(timeStamp);
+  Runner.play(timeStamp);
   if (GameStatus == 2) {
-    if (Mario.pos - 2 != CurScore.end - 1) {
-      AnimeID = requestAnimFrame(doMarioPlay);
+    if (Runner.pos - 2 != CurScore.end - 1) {
+      AnimeID = requestAnimFrame(doRunnerPlay);
     } else if (CurScore.loop) {
       CurPos = 0;
-      Mario.pos = 1;
-      Mario.x = 40;
-      Mario.init4playing(timeStamp);
-      AnimeID = requestAnimFrame(doMarioPlay);
+      Runner.pos = 1;
+      Runner.x = 40;
+      Runner.init4playing(timeStamp);
+      AnimeID = requestAnimFrame(doRunnerPlay);
     } else {
       // Calls stopListener without a event arg
       stopListener.call(document.getElementById('stop'));
@@ -1668,16 +2138,16 @@ function doMarioPlay(timeStamp) {
 }
 
 // Let Mario leave from the stage
-function doMarioLeave(timeStamp) {
+function doRunnerLeave(timeStamp) {
   bombTimer.checkAndFire(timeStamp);
-  drawScore(CurPos, CurScore.notes, Mario.scroll);
-  Mario.leave(timeStamp);
+  drawScore(CurPos, CurScore.notes, Runner.scroll);
+  Runner.leave(timeStamp);
 
-  if (Mario.x < 247) {
-    requestAnimFrame(doMarioLeave);
+  if (Runner.x < 247) {
+    requestAnimFrame(doRunnerLeave);
   } else {
     GameStatus = 0;
-    
+
     ["toLeft", "toRight", "scroll", "play", "clear", "frog", "beak", "1up"].
       map(function (id) {
         document.getElementById(id).disabled = false;
@@ -1685,6 +2155,10 @@ function doMarioLeave(timeStamp) {
 
     requestAnimFrame(doAnimation);
   }
+
+  // Clear MIDI output
+  if (MIDIOUT) MIDIOUT.stopAll();
+  MikuEntity.doremiMode = true;
 }
 
 // Clear Song Buttons
@@ -1772,7 +2246,8 @@ function sliceImage(img, width, height) {
 
 // Download Score as JSON
 //   http://jsfiddle.net/koldev/cW7W5/
-function download() {
+function save() {
+  CurScore.lyric = document.getElementById("lyric").value;
   var link = document.createElement("a");
   link.download = 'MSQ_Data.json';
   var json = JSON.stringify(CurScore);
@@ -1783,49 +2258,48 @@ function download() {
 }
 
 EmbeddedSong = [];
-EmbeddedSong[0] = {"notes":[[1026,2313],[1026,2313],[],[1026,2313],
-  [],[1028,2315],[1026,2313],[],[1024,2311],[],[],[],[517,3591,265],
-  [],[],[],[2818,2820,267],[],[3072,3595],[3072,2818,3595],
-  [2817,2820,267],[],[3072,3592],[3072,2817,3591],[2816,2819,267],[],
-  [3072,3591],[2816,1287,3595],[2817,1286,1288],[262,1288,1290],
-  [1286,3591,1288],[1285,1287,266],[2,3595,3084],[],[256],[257,3595],
-  [4,3593,3084],[],[256],[257,7,3593],[6,3592,3084],[4],[256,3592],
-  [257,4,3590],[3084],[256],[],[257,6,3591],[7,3084],[3591],
-  [256,4,3592],[257],[4,3593,3084],[],[0,3594],[257],[2,3591],[1031],
-  [256,1030],[3,1029,3592],[1028],[1027,262],[1026],[1025,263],
-  [1026,266,3595],[7],[2050,4],[7,266,3595],[1028,3593,266],[7],
-  [2050,4],[5,1031,3593],[1030,3592,266],[1028,6,2568],[4],
-  [1,1028,3590],[264],[2049,2,260],[3,260],[261,1030],[1031,266],
-  [3584,2,7],[1028],[1,5,7],[1025,3591],[1026],[1027],[],[1028],
-  [258,3588],[],[260,3595],[261,3595],[],[261,267],[],[]],
+EmbeddedSong[0] = {"notes":[[1100,2368],[1100,2368],[],[1100,2368],[],
+  [1096,2364],[1100,2368],[],[1103,2371],[],[],[],[583,3651,320],[],[],[],
+  [2892,2888,316],[],[3151,3644],[3151,2892,3644],[2893,2888,316],[],
+  [3151,3649],[3151,2893,3651],[2895,2890,316],[],[3151,3651],
+  [2895,1347,3644],[2893,1349,1345],[325,1345,1342],[1349,3651,1345],
+  [1351,1347,318],[76,3644,3131],[],[335],[333,3644],[72,3648,3131],[],
+  [335],[333,67,3648],[69,3649,3131],[72],[335,3649],[333,72,3653],[3131],
+  [335],[],[333,69,3651],[67,3131],[3651],[335,72,3649],[333],[72,3648,3131],
+  [],[79,3646],[333],[76,3651],[1091],[335,1093],[74,1095,3649],[1096],
+  [1098,325],[1100],[1101,323],[1100,318,3644],[67],[2124,72],[67,318,3644],
+  [1096,3648,318],[67],[2124,72],[71,1091,3648],[1093,3649,318],
+  [1096,69,2625],[72],[77,1096,3653],[321],[2125,76,328],[74,328],[327,1093],
+  [1091,318],[3663,76,67],[1096],[77,71,67],[1101,3651],[1100],[1098],[],
+  [1096],[332,3656],[],[328,3644],[327,3644],[],[327,316],[]],
   "beats":4,"loop":false,"end":96,"tempo":"370"};
 
-EmbeddedSong[1] = {"notes":[[772,779],[768],[770,779],[768],[772,775],
-  [768],[770,775],[768],[772,774],[769],[772,774],[769],[768,770,775],
-  [],[],[],[769,774,776],[772],[769,774,776],[772],[770,775,777],
-  [772],[770,775,777],[772],[771,773,778],[775],[771,778],[773],
-  [771,777,779],[],[],[],[775,777],[768],[775,777],[768],[776,778],
-  [768],[776,778],[768],[777,779],[768],[777,779],[768],[778,780],
-  [],[],[],[775],[768,772],[775],[768,772],[776],[768,772],[776],
-  [768,772],[777],[768,772],[777],[768,772],[771,773,778],[],[],[],
-  [777,779],[779],[777,779],[779],[775,777],[777],[775,777],[777],
-  [774,776],[776],[774,776],[776],[768,775,777],[],[],[],[774,776],
-  [776],[774,776],[773],[772,777],[775],[772,777],[],[771,775,778],
-  [],[771,775,778],[],[772,777,779],[],[],[],[]],
-  "beats":4,"loop":true,"end":96,"tempo":"178"};
+EmbeddedSong[1] = {"notes":[[840,828],[847],[844,828],[847],[840,835],
+  [847],[844,835],[847],[840,837],[845],[840,837],[845],[847,844,835],
+  [],[],[],[845,837,833],[840],[845,837,833],[840],[844,835,832],[840],
+  [844,835,832],[840],[842,839,830],[835],[842,830],[839],[842,832,828],
+  [],[],[],[835,832],[847],[835,832],[847],[833,830],[847],[833,830],[847],
+  [832,828],[847],[832,828],[847],[830,827],[],[],[],[835],[847,840],[835],
+  [847,840],[833],[847,840],[833],[847,840],[832],[847,840],[832],
+  [847,840],[842,839,830],[],[],[],[832,828],[828],[832,828],[828],
+  [835,832],[832],[835,832],[832],[837,833],[833],[837,833],[833],
+  [847,835,832],[],[],[],[837,833],[833],[837,833],[839],[840,832],[835],
+  [840,832],[],[842,835,830],[],[842,835,830],[],[840,832,828],[],[],[]],
+  "end":96,"tempo":"178","loop":true,"beats":4};
 
-EmbeddedSong[2] = {"notes":[[266,3595],[3072,2,7],[3591,3081],[3072,2,7],
-  [2305,3590,266],[2305,2,7],[1,2307,3594],[3078],[266,3595],[3072,2,7],
-  [3591,3081],[3072,2,7],[2305,3590,266],[2305,3,7],[1,2307,3594],[],
-  [1028,3079,3595],[3072,2,7],[1028,3078,3591],[1026,261,7],[1024,267],
-  [],[1543],[],[1281,3594],[1,6],[1281,3590],[1282,6],[1283],[],[1798],
-  [],[1027,3079,3594],[3072,1,6],[1027,3590,3082],[1025,261,6],[1030,267],
-  [],[2055,2059],[],[1280,1285,3595],[2,7],[1280,1285,3591],[1281,2,1286],
-  [1282,1287,266],[2571],[],[],[1287,779],[775],[1287,777],[772,1287],
-  [1284,775,264],[2306,3077],[2306,264],[2308,3077],[1286,2826],[2822],
-  [1286,2824],[2819,1286],[1284,2822,264],[2305,3077],[2305,264],
-  [2307,3077],[1285,3335,264],[3331],[1285,3335],[3329,1285],
-  [1283,1029,264],[],[519],[],[2304,1282,1028],[2304,1282,1028],
-  [2304,1282,1028],[2305,1283,1029],[2306,1284,1030],[],[2304,1282,1028],
+EmbeddedSong[2] = {"notes":[[318,3644],[3151,76,67],
+  [3651,3136],[3151,76,67],[2381,3653,318],[2381,76,67],[77,2378,3646],
+  [3141],[318,3644],[3151,76,67],[3651,3136],[3151,76,67],[2381,3653,318],
+  [2381,74,67],[77,2378,3646],[],[1096,3139,3644],[3151,76,67],
+  [1096,3141,3651],[1100,327,67],[1103,316],[],[1603],[],[1357,3646],
+  [77,69],[1357,3653],[1356,69],[1354],[],[1861],[],[1098,3139,3646],
+  [3151,77,69],[1098,3653,3134],[1101,327,69],[1093,316],[],[2115,2108],
+  [],[1359,1351,3644],[76,67],[1359,1351,3651],[1357,76,1349],
+  [1356,1347,318],[2620],[],[],[1347,828],[835],[1347,832],[840,1347],
+  [1352,835,321],[2380,3143],[2380,321],[2376,3143],[1349,2878],[2885],
+  [1349,2881],[2890,1349],[1352,2885,321],[2381,3143],[2381,321],[2378,3143],
+  [1351,3395,321],[3402],[1351,3395],[3405,1351],[1354,1095,321],[],[579],
+  [],[2383,1356,1096],[2383,1356,1096],[2383,1356,1096],[2381,1354,1095],
+  [2380,1352,1093],[],[2383,1356,1096],
   [],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]],
   "beats":4,"loop":true,"end":80,"tempo":"287"};
