@@ -687,19 +687,29 @@ RunnerClass.prototype.play = function(timeStamp) {
     this.x = 120;
     if (this.scroll < 16 && (this.scroll + step) >= 16) {
       this.pos++;
-      this.scroll += step;
       scheduleAndPlay(CurScore.notes[this.pos - 2], 0); // Ignore error
       this.checkJump();
-    } else {
-      this.scroll += step;
-      if (this.scroll > 32) {
-        this.scroll -= 32;
-        CurPos++;
-        scroll.value = CurPos;
-        if (CurPos > (CurScore.end - 6)) {
-          this.x += this.scroll;
-          this.scroll = 0
-        }
+    }
+    this.scroll += step;
+    while (this.scroll >= 32) { // Virtually adopt any fast tempo
+      this.scroll -= 32;
+      if (this.scroll >= 16) {
+        this.pos++;
+        scheduleAndPlay(CurScore.notes[this.pos - 2], 0);
+        this.checkJump();
+      }
+      CurPos++;
+      // Force position
+      if (this.pos - CurPos < 3) {
+        console.log("Skip SOUND!!!");
+        this.pos = CurPos + 3
+        scheduleAndPlay(CurScore.notes[this.pos - 2], 0);
+        this.checkJump();
+      }
+      scroll.value = CurPos;
+      if (CurPos > (CurScore.end - 6)) {
+        this.x += this.scroll;
+        this.scroll = 0
       }
     }
   } else {
@@ -2021,36 +2031,41 @@ function onload() {
     console.error("Invalid GET parameter :" + err.stack);
   });
 
-  document.addEventListener('keydown',function(e) {
-    switch (e.keyCode) {
-      case 32: // space -> play/stop or restart with shift
-        var playBtn = document.getElementById('play');
-        if (playBtn.disabled == false || e.shiftKey) {
-          playListener.call(playBtn,e);
-        } else {
-          stopListener.call(document.getElementById('stop'),e);
-        }
-        e.preventDefault();
-        break;
-
-      case 37: // left -> scroll left
-        var r = document.getElementById('scroll');
-        if (r.value > 0) CurPos = --r.value;
-        e.preventDefault();
-        break;
-
-      case 39: // right -> scroll right
-        var r = document.getElementById('scroll');
-        if (r.value < CurMaxBars - 6) CurPos = ++r.value;
-        e.preventDefault();
-        break;
-    }
-  });
+  // Should use SCREEN instead of document?
+  document.addEventListener('keydown', handleKeyboard);
 
   requestAnimFrame(doAnimation);
 
   var b = document.getElementById("magnify");
   b.addEventListener("change", selectListener);
+}
+
+function handleKeyboard(e) {
+  console.log("e.keyCode = " + e.keyCode);
+  console.log("e.shiftKey = " + e.shiftKey);
+  switch (e.keyCode) {
+    case 32: // space -> play/stop or restart with shift
+      var playBtn = document.getElementById('play');
+      if (playBtn.disabled == false || e.shiftKey) {
+        playListener.call(playBtn,e);
+      } else {
+        stopListener.call(document.getElementById('stop'),e);
+      }
+      e.preventDefault();
+      break;
+
+    case 37: // left -> scroll left
+      var r = document.getElementById('scroll');
+      if (r.value > 0) CurPos = --r.value;
+      e.preventDefault();
+      break;
+
+    case 39: // right -> scroll right
+      var r = document.getElementById('scroll');
+      if (r.value < CurMaxBars - 6) CurPos = ++r.value;
+      e.preventDefault();
+      break;
+  }
 }
 
 function autoPlayIfDemanded(opts) {
