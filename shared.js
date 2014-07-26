@@ -420,7 +420,7 @@ function MIDIEntity(channel, program) {
   this.noteOff = 0x80 | channel;
   // Channel 0 is specific for Miku. Channel 10 is specific for Drum map.
   if (channel == 0 || channel == 10) return;
-  MIDIOUT.send([0xC0 | channel, program]);
+  if (MIDIOUT) MIDIOUT.send([0xC0 | channel, program]);
 }
 MIDIEntity.prototype = new SoundEntity();
 MIDIEntity.prototype.constructor = MIDIEntity;
@@ -2191,12 +2191,18 @@ function doRunnerLeave(timeStamp) {
         document.getElementById(id).disabled = false;
       });
 
+    // Clear MIDI output
+    if (MIDIOUT) MIDIOUT.stopAll();
+    MikuEntity.doremiMode = true;
+
+    // When stop, close your mouth!
+    if (CurSong != undefined) {
+      CurSong.style.backgroundImage =
+        "url(" + CurSong.images[1].src + ")";
+    }
+
     requestAnimFrame(doAnimation);
   }
-
-  // Clear MIDI output
-  if (MIDIOUT) MIDIOUT.stopAll();
-  MikuEntity.doremiMode = true;
 }
 
 // Clear Song Buttons
