@@ -36,11 +36,12 @@ navigator.requestMIDIAccess({sysex:true}).then(function(midiAccess) {
           this.send(msg);
         }
       };
-      return;
     }
+  }
+  for (var i = 0; i < ins.length; i++) {
     if (ins[i].name.substr(0, 6) == "NSX-39") {
       MIDIIN = ins[i];
-      MIDIIN.onmidimessage = function (e) {
+      MIDIIN.onmidimessage = function (event) {
         var str = "MIDI message received at timestamp " + event.timestamp + "[" + event.data.length + " bytes]: ";
         for (var i=0; i<event.data.length; i++) {
           str += "0x" + event.data[i].toString(16) + " ";
@@ -49,19 +50,19 @@ navigator.requestMIDIAccess({sysex:true}).then(function(midiAccess) {
       };
     }
   }
-  alert("POKEMIKU NOT FOUND");
-  console.log("POKEMIKU NOT FOUND");
-  console.log("This program needs YAMAHA NSX-39.");
+  if (MIDIOUT == null || MIDIIN == null) {
+    throw Error("POKEMIKU NOT FOUND");
+    console.log("POKEMIKU NOT FOUND");
+    console.log("This program needs YAMAHA NSX-39.");
+  }
 }, function (err) {
-  alert("Can't use MIDI:" + err);
-  console.log("Can't use MIDI:" + err);
+  alert("PokeMiku not found:" + err);
+  console.log("PokeMiku not found:" + err);
 })
-/*
-     .catch(function (err) {
+.catch(function (err) {
   alert("Can't use MIDI:" + err);
   console.log("Can't use MIDI:" + err);
 });
-*/
 
 // GLOBAL VARIABLES
 //   Constants: Full capital letters
@@ -99,6 +100,14 @@ PsedoSheet = null // CSSRules for manipulating pseudo elements
 RepeatMark = null // For Score
 EndMark    = null
 SysSnd = {}; // System Sounds
+NoteLen = undefined; // Note Length images
+MikuMemo = []; // Memoize of the number of Miku notes for a bar number
+
+// How can you say OFFSETLEFT and TOP are constant?
+window.onresize = function(e) {
+  OFFSETLEFT = CONSOLE.offsetLeft;
+  OFFSETTOP  = CONSOLE.offsetTop;
+}
 
 /*
  * GameStatus: Game mode
@@ -106,6 +115,7 @@ SysSnd = {}; // System Sounds
  *   1: Mario Entering
  *   2: Playing
  *   3: Mario Leaving
+ *   4: Test play
  */
 GameStatus = 0;
 
@@ -134,13 +144,7 @@ function SoundEntity(path) {
 // You should choose correct playback rate to play a music.
 SoundEntity.prototype.play = function(scale, delay) {
   var source = AC.createBufferSource();
-//  var tmps = scale & 0x0F;
-//  var semitone = this.diff[tmps];
   var semitone = scale - 65; // WAV is F
-  /*
-  if ((scale & 0x80) != 0) semitone++;
-  else if ((scale & 0x40) != 0) semitone--;
-  */
   if (delay == undefined) delay = 0;
   source.buffer = this.buffer;
   source.playbackRate.value = Math.pow(SEMITONERATIO, semitone);
@@ -169,11 +173,6 @@ SoundEntity.prototype.playChord = function(noteList, delay) {
   for (var i = 0; i < noteList.length; i++) {
     var source = AC.createBufferSource();
     var key = noteList[i];
-    /*
-    var semitone = this.diff[key];
-    if ((noteList[i] & 0x80) != 0) semitone++;
-    else if ((noteList[i] & 0x40) != 0) semitone--;
-    */
     var semitone = key - 65;
     source.buffer = this.buffer;
     source.playbackRate.value = Math.pow(SEMITONERATIO, semitone);
@@ -239,6 +238,10 @@ function isEbony(key) {
 //           Otherwise, the note is expressed with sharp symbol.
 //   length: Musical note length
 //           0 is infinity.
+//           1 is key off. Just stop the note if the key is on
+//           2 is 0.5 for staccart
+//           3 is 1 (You should not use this if note succeeds other note)
+//           others can be added, but I believe there's no requirement.
 function encodeNote(gridY, program, isSharp, isFlat, length) {
   var interval = [0, 2, 3, 5, 7, 8, 10, 12, 14, 15, 17, 19, 20];
   if (isSharp == undefined) isSharp = false;
@@ -251,7 +254,14 @@ function encodeNote(gridY, program, isSharp, isFlat, length) {
 
   if (length == undefined) length = 0;
   // Todo: Decide how to encode note length
-  return (program << 8 | (isFlat << 7) | key);
+  return (length << 13 | program << 8 | (isFlat << 7) | key);
+}
+
+// ReEncode Note:
+//   When you change length or octave of notes,
+//  you already have MIDI key so you can't use encodeNote again.
+function reencodeNote(key, program, isFlat, length) {
+  return (length << 13 | program << 8 | isFlat << 7 | key);
 }
 
 // Decode Note
@@ -285,9 +295,32 @@ function key2GridY(note, isFlat) {
   } else if (key <= 69) {
     gridY = sTable[doremi];
   }
-  if (isFlat) gridY--;
+  if (isFlat) {
+    if (doremi == 10 && key <= 59) gridY = 12; //Bb (A#) jumps 6 to 12
+    else gridY--;
+  }
   return gridY;
 }
+
+// Unicode to Hiragana img table
+//   Change Unicode - U+3041 to the index of Hiragana images.
+//   Note that some characters such as KyuKana (Old Kana) is not supported.
+//   I fear if Mac returns unnormalised unicode, this will fail...
+//   (Macintosh is always the seed of Unicode hell. Though Win has other problems.)
+//   (Using Japanese in English world (computer) is always like going to hell...)
+//  Refer: http://en.wikipedia.org/wiki/Hiragana_(Unicode_block)
+Uni2Hira = [
+  55,    0,   56,    1,   57,    2,   58,    3,   59,    4, // あ行
+   5, 0x45,    6, 0x46,    7, 0x47,    8, 0x48,    9, 0x49, // か行
+  10, 0x4A,   11, 0x4B,   12, 0x4C,   13, 0x4D,   14, 0x4E, // さ行
+  15, 0x4F,   16, 0x50,   53,   17, 0x51,   18, 0x52,   19, 0x53, // た行 (with small つ)
+  20,   21,   22,   23,   24, // な行
+  25, 0x59, 0x99,   26, 0x5A, 0x9A, 27, 0x5B, 0x9B, 28, 0x5C, 0x9C, 29, 0x5D, 0x9D, // はばぱ
+  30,   31,   32,   33,   34, // ま行
+  50, 35, 51, 36, 52, 37, // ゃやゅゆょよ
+  40, 41, 42, 43, 44, undefined, 45, // ら行 + わ
+  undefined, undefined, 46, 47 // をん
+];
 
 // Make Char to number table for NSX-39
 PhoneticSymbols = [
@@ -321,42 +354,123 @@ MikuEntity = new SoundEntity();
 // MikuEntity.doremi = [0x32, 0x72, 0x65, 0x5F, 0x19, 0x6F, 0x16];
 MikuEntity.doremi = [0x32, 0x32, 0x72, 0x72, 0x65, 0x5F, 0x5F, 0x19, 0x19, 0x6F, 0x6F, 0x16];
 MikuEntity.doremiMode = true;
-MikuEntity.prev = 0;
+MikuEntity.prevKey = 0;
+MikuEntity.prevChar = "";
 MikuEntity.load = function() { // To avoid load error
   return Promise.resolve();
 }
 MikuEntity.play = function(key, delay) {
-//  var tmps = scale & 0x0F;
-//  var semitone = this.diff[tmps];
-
-//  if ((scale & 0x80) != 0) semitone++;
-//  else if ((scale & 0x40) != 0) semitone--;
   if (delay == undefined) delay = 0;
-//  var note = 0x42 + semitone; // 0x42 is F of C3 (or C4)
-  this.prev = key;
+  var len = key >> 8;
+  key = key & 0x7F;
+  var velocity = 0x7F;
 
-  if (this.doremiMode) {
-    letter = this.doremi[key % 12];
-    MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0A,0x00,letter,0xF7]);
+
+  // Once before, I put key-off prevKey here.
+  // But it sounds terrible. So don't do it again!
+  // Even sending KeyOff and KeyOn sequencially don't work.
+
+  if (len == 1) velocity = 0;
+
+  // Reset counters if they over the limit (when it loops, etc.)
+  if (this.slot != undefined
+      && (this.idxL >= this.slot.length || this.slot[this.idxL] == 0)) {
+    console.log("Lyrics rewinded to the top");
+    this.idxL = 0;
+    this.curSlot = 1;
+    this.numOfChars = 0;
+    this.changeSlot(1);
+  } else if (this.numOfChars >= 64) {
+    this.numOfChars = 0;
+    this.changeSlot(++this.curSlot);
   }
+  if (this.slot == undefined || this.doremiMode) {
+    var ps = this.doremi[key % 12];
+    MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0A,0x00, ps,0xF7, 0x80, key, 0x7F]);
+    var num = 1;
+  } else {
+    var letter = this.slot[this.idxL];
+    var num = letter.split('|').length;
+
+    // If prevChar == curChar and they're not vowel, key off first to stop concat sounds
+    var code = letter.charCodeAt(0);
+    if (this.prevChar == letter && (code < 0x3041 || code > 0x304A)) {
+      MIDIOUT.send([0x80, this.prevKey, 0x7F]);
+    }
+  }
+
+  // If there're multiple characters, divide one note
+  var oneNoteTime = 60 / CurScore.tempo * 1000;
+  var oneCharTime = oneNoteTime / num;
+  var curTime = window.performance.now();
   //this.sendNextChar();
-  MIDIOUT.send([0x90, key, 0x4F]);
-  if (this.off_flag)
-    MIDIOUT.send([0x80, key, 0x7F], window.performance.now() + 60 / CurScore.tempo * 1000 * 2);
+  for (var i = 0; i < num; i++) {
+    if (num > 1) console.log("num = " + num + " oneNoteTime = " + oneNoteTime + " oneCharTime = " + oneCharTime + " letter = " + letter);
+    MIDIOUT.send([0x90, key, velocity], curTime + oneCharTime * i);
+  }
+
+  if (len == 2)
+    MIDIOUT.send([0x80, key, 0x3F], curTime + oneNoteTime * 0.5);
+  else if (this.doremiMode && GameStatus == 0)
+    MIDIOUT.send([0x80, key, 0x3F], curTime + oneNoteTime);
+
+  if (!this.doremiMode) {
+    this.prevChar = letter;
+    this.prevKey = key;
+  }
+
+  // Count and Change Slot
+  //   Unfortunately, PokeMiku won't do this for you!
+  if (len != 1) {
+    this.idxL += 1; // No need to use num cause even one bar has many chars, they all are in the one
+    this.numOfChars += num;
+  }
 };
 MikuEntity.playChord = function(noteList, delay) {
   this.play(noteList[0], 0);
 };
-MikuEntity.initLyric = function() {
-  this.lyric = document.getElementById("lyric").value;
+MikuEntity.initLyric = function(fn) {
+  var curLyric= document.getElementById("lyric").value;
+  // idxL is a counter for whole lyrics, numOfChars is a counter for each of slots
   this.idxL = 0; // Specify Nth character to sing
-  if (this.lyric == undefined || this.lyric == "") {
-    this.doremiMode = true;
-  } else {
-    this.doremiMode = false;
-    if (this.lyric.length < 65) this.sendThemAll();
+  this.curSlot = 1; // Specify current lyric slot (0-F)
+  this.numOfChars = 0;; // Hold the number of chars sent to MIDI (MAX = 63)
+
+  // Init MikuMemo
+  MikuMemo = [0];
+  // Init MikuMemo[1], if the first bar contains Miku note.
+  var c = 0; //counter
+  OUTER: for (var i = 0; i < CurScore.notes.length; i++) {
+    var notes = CurScore.notes[i];
+    for (var j = 0; j < notes.length; j++) {
+      var note = notes[j] >> 8;
+      var num  = note & 0x1F;
+      var len  = note >> 5;
+      if (num == 15 & len != 1) {
+        c++;
+        if (c == 2) {
+          MikuMemo[i] = 1;
+          break OUTER;
+        }
+        MikuMemo[i] = 0;
+      }
+    }
   }
-  this.off_flag = false;
+
+  if (curLyric == undefined || curLyric == "") {
+    this.Lyric = curLyric;
+    this.doremiMode = true;
+    fn();
+  } else if (curLyric === this.lyric) {
+    this.doremiMode = false;
+    this.changeSlot(1);
+    fn();
+  } else {
+    this.lyric = curLyric;
+    this.doremiMode = false;
+    console.log("Lyric Length = " + this.lyric.length);
+    this.sendThemAll(fn);
+  }
 };
 MikuEntity.sendNextChar = function () {
   var letter;
@@ -379,38 +493,149 @@ MikuEntity.sendNextChar = function () {
   letter = PhoneticSymbols[letter];
   MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0A,0x00,letter,0xF7]);
 }
-MikuEntity.sendThemAll = function () {
-  var start = window.performance.now()
-  var letter;
-  this.off_flag = false;
-  var result = [];
+MikuEntity.sendThemAll = function (animeRequest) {
+  var savedfunc = MIDIIN.onmidimessage;
+  this.slot = [];
 
-  while (this.idxL < this.lyric.length) {
-    letter = this.lyric[this.idxL++];
-    if (letter == '\n') continue;
+  // make lyrics writer:
+  //   return Promise which writes lyrics (MAX 64 chars) into a NSX-39 lyrics slot
+  //   NSX-39 returns the status as MIDI IN data transfer.
+  //   MIDI IN listener will be overwritten, then get backed to the original.
+  //   NSX-39 always returns BUSY code first, so ignore it.
+  //   Slot 0 is in-memory slot and it won't return any status code
+  function makeLyricsWriter(result, slot) {
+    console.log("makeLyricsWriter: result.length = " + result.length + " slot = " + slot);
+    return new Promise(function (resolve, reject) {
+      var start = window.performance.now()
+      var HEAD = [0xF0,0x43,0x79,0x09,0x11,0x0A,slot];
+      var TAIL = 0xF7;
+      result = HEAD.concat(result);
+      result.push(TAIL);
 
-    var n = this.lyric[this.idxL];
-    var nc = n.charCodeAt(0);
-    // If the next char is one of "ぁぃぅぇぉゃゅょ"
-    if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
-          nc & 1 == 1) {
-      letter += n;
-      this.idxL++;
-    } else if (n == "\n") {
-      this.off_flag = true;
-      this.idxL++;
-    }
-    console.log(letter);
-    letter = PhoneticSymbols[letter];
-    result.push(letter);
+      var tid = setTimeout(function() {
+        reject(new Error('timeout error'))
+      }, 500); // Average writing time = 220[ms]
+
+      MIDIIN.onmidimessage = function (e) {
+        var err = e.data[6];
+        if (e.data[5] == 0x21) {
+          if (err == 0) {
+            console.log("TIME = " + (window.performance.now() - start));
+            clearTimeout(tid);
+            resolve("OK"); // Success
+          } else if (err == 1) {
+            console.log("BUSY!");
+          } else if (err == 2) {
+            reject('FAIL: Writing lyrics into slot ' + slot);
+          }
+        }
+      }
+
+      MIDIOUT.send(result);
+
+      if (slot == 0) {
+        clearTimeout(tid);
+        console.log("Timeout Cleared!");
+        resolve(0);
+      }
+    });
   }
-  var HEAD = [0xF0,0x43,0x79,0x09,0x11,0x0A,0x00];
-  var TAIL = 0xF7;
-  result = HEAD.concat(result);
-  result.push(TAIL);
-  MIDIOUT.send(result);
-  console.log("TIME = " + (window.performance.now() - start));
+  // Get Next Letter:
+  //   Result is an array of one display letter and one phonetic symbol.
+  //   WARNING: I don't have English native tongue.
+  //   I already am regretting about how I used 's' for plural
+  function getNextLetter(self, letter) {
+      var letter = self.lyric[self.idxL++];
+      while (letter == '\n') letter = self.lyric[self.idxL++];
+      if (letter == undefined) return [0, 0];
+
+      var n  = self.lyric[self.idxL];
+      var nc = (n == undefined) ? '\0' : n.charCodeAt(0);
+
+      // If the next char is one of "ぁぃぅぇぉゃゅょ"
+      if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
+            nc & 1 == 1) {
+        letter += n;
+        self.idxL++;
+      } else if (n == "\n") { // Ignore new line or EOF
+        self.idxL++;
+      } else if (n == '\0') return [0, 0];
+
+      console.log(letter);
+      var tmp = letter;
+      if (tmp == "づ") tmp = "どぅ";
+      else if (tmp == "を") tmp = "うぉ";
+      var p = PhoneticSymbols[tmp];
+      if (p == undefined) {
+        console.log("    is not in PS table");
+      }
+      return [letter, p];
+  }
+
+  var contents = [];
+  while (contents.length < 17) {
+    var letters = []; // For display
+    var result  = []; // For playing. Chars are changed to more suitable for NSX-39
+    while (this.idxL < this.lyric.length && result.length < 64) {
+      var lr = getNextLetter(this);
+      var one = lr[0];
+      if (one == '\0') break;
+      else if (one == '(') {
+        var letter = "";
+        var count = 0;
+        while (lr = getNextLetter(this)) {
+          one = lr[0];
+          if (one == ")") break;
+          count++;
+          letter = (letter == "") ? letter = one : letter + '|' + one;
+          result.push(lr[1]);
+          if (result.length >= 64) {
+            contents.push(result);
+            result = [];
+          }
+        }
+        //letter = "" + count + letter;
+        letters.push(letter);
+      } else {
+        result.push(lr[1]);
+        letters.push(one);
+      }
+    }
+    contents.push(result);
+    console.log("result = " + result);
+    this.slot = this.slot.concat(letters);
+    if (result.length < 64) break;
+  }
+  // It seems like NSX-39 can handle only one slot request at a time,
+  // so Promises are processed sequencially, not concurrently.
+  contents.reduce(function(chain, content, idx) {
+    console.log("chain = " + chain);
+    console.log("Length = " + content.length + " idx = " + idx);
+    return chain.then(function () {
+      return makeLyricsWriter(content, idx + 1);
+    }).catch(function (e) {
+      console.log("ERR: " + e);
+    });
+  }, Promise.resolve()).catch(function (e) {
+    console.log(e);
+  }).then(function () {
+    MIDIIN.onmidimessage = savedfunc;
+    MikuEntity.changeSlot(1);
+    MikuEntity.idxL = 0;
+    animeRequest();
+  }).catch(function (e) {
+    alert("ERR: " + e);
+    console.log(e);
+  });
 };
+MikuEntity.changeSlot = function(num) {
+  console.log("Change Slot to " + num);
+  MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0D,0x09,0x03,00, num,0xF7]);
+};
+MikuEntity.changeLyricPosition = function(idx) {
+  console.log("Change Lyric Position to " + idx);
+  MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0D,0x09,0x02,00, idx,0xF7]);
+}
 
 // MIDIEntity
 function MIDIEntity(channel, program) {
@@ -420,13 +645,14 @@ function MIDIEntity(channel, program) {
   this.noteOff = 0x80 | channel;
   // Channel 0 is specific for Miku. Channel 10 is specific for Drum map.
   if (channel == 0 || channel == 10) return;
-  if (MIDIOUT) MIDIOUT.send([0xC0 | channel, program]);
+  MIDIOUT.send([0xC0 | channel, program]);
 }
 MIDIEntity.prototype = new SoundEntity();
 MIDIEntity.prototype.constructor = MIDIEntity;
 MIDIEntity.prototype.play = function (key, delay) {
   if (delay == undefined) delay = 0;
   MIDIOUT.send([this.noteOn, key, 0x7F]);
+  MIDIOUT.send([this.noteOff, key, 0x3F], window.performance.now() + 60 / CurScore.tempo * 1000);
 };
 MIDIEntity.prototype.playChord = function (noteList, delay) {
   for (var i = 0; i < this.prevChord.length; i++) {
@@ -436,7 +662,16 @@ MIDIEntity.prototype.playChord = function (noteList, delay) {
   if (delay == undefined) delay = 0;
   for (var i = 0; i < noteList.length; i++) {
     var key = noteList[i];
+    var len = key >> 8;
+    key &= 0x7F;
+    if (len == 1) {
+      MIDIOUT.send([this.noteOff, key, 0x3F]);
+      continue;
+    }
     MIDIOUT.send([this.noteOn, key, 0x7F]);
+    var oneNoteTime = 60 / CurScore.tempo * 1000;
+    var curTime = window.performance.now();
+    if (len == 2) MIDIOUT.send([this.noteOff, key, 0x3F], curTime + oneNoteTime * 0.5);
     this.prevChord.push(key);
   }
 };
@@ -568,6 +803,17 @@ RunnerClass.prototype.init = function() {
   this.isJumping = false;
 };
 
+RunnerClass.prototype.init4testPlay = function () {
+  this.x = -16;
+  this.pos = CurPos - 1;
+  this.start = 0;
+  this.state = 0;
+  this.scroll = 0;
+  this.offset = -16;
+  this.checkJump();
+  this.lastTime = 0;
+};
+
 // setTimer: set timer instance
 // Detached from init so that Mario and Miku can use
 // a different timer instance.
@@ -629,35 +875,38 @@ RunnerClass.prototype.init4playing = function(timeStamp) {
   this.checkJump();
 };
 
-RunnerClass.prototype.play = function(timeStamp) {
-  // function for setting a chord to SoundEntities and playing it
-  function scheduleAndPlay(notes, time) {
-    if (time < 0) time = 0;
-    if (notes == undefined || notes.length == 0) return;
-    var dic = {};
-    for (var i = 0; i < notes.length; i++) {
-      var note = notes[i];
+// function for setting a chord to SoundEntities and playing it
+function scheduleAndPlay(notes, time) {
+  if (time < 0) time = 0;
+  if (notes == undefined || notes.length == 0) return;
+  var dic = {};
+  for (var i = 0; i < notes.length; i++) {
+    var note = notes[i];
 
-      // Dynamic tempo change
-      if (typeof note == "string") {
-        var tempo = note.split("=")[1];
-        CurScore.tempo = tempo;
-        document.getElementById("tempo").value = tempo;
-        continue;
-      }
+    // Dynamic tempo change
+    if (typeof note == "string") {
+      var tempo = note.split("=")[1];
+      CurScore.tempo = tempo;
+      document.getElementById("tempo").value = tempo;
+      continue;
+    }
 
-      //var num = note >> 8;
-      //var scale = note & 0xFF;
-      var a = decodeNote(note);
-      var num = a[0];
-      var key = a[1];
-      if  (!dic[num]) dic[num] = [key];
-      else dic[num].push(key);
-    }
-    for (var i in dic) {
-      SOUNDS[i].playChord(dic[i], time / 1000); // [ms] -> [s]
-    }
+    //var num = note >> 8;
+    //var scale = note & 0xFF;
+    var a = decodeNote(note);
+    var num = a[0];
+    var key = a[1];
+    var len = a[3];
+    if (num >= 15) key ^= (len << 8);
+    if  (!dic[num]) dic[num] = [key];
+    else dic[num].push(key);
   }
+  for (var i in dic) {
+    SOUNDS[i].playChord(dic[i], time / 1000); // [ms] -> [s]
+  }
+}
+
+RunnerClass.prototype.play = function(timeStamp) {
 
   var tempo = CurScore.tempo
   var diff = timeStamp - this.lastTime; // both are [ms]
@@ -725,6 +974,27 @@ RunnerClass.prototype.play = function(timeStamp) {
   this.draw();
 };
 
+RunnerClass.prototype.testPlay = function (timeStamp) {
+  var tempo = CurScore.tempo
+  var diff = timeStamp - this.lastTime; // both are [ms]
+  if (diff > 32) diff = 16; // When user hide the tag, force it
+  this.lastTime = timeStamp;
+  var step = 32 * diff * tempo / 60000; // (60[sec] * 1000)[msec]
+
+  this.timer.checkAndFire(timeStamp);
+
+  var nextBar = (16 + 32 * (this.pos - CurPos + 1) - 8);
+  this.x += step;
+  // If this step crosses the bar
+  if (this.x >= nextBar) {
+    this.pos++;
+    scheduleAndPlay(CurScore.notes[this.pos - 2], 0); // Ignore diff
+    this.checkJump();
+  }
+  drawScore(CurPos, CurScore.notes, 0);
+  this.draw();
+};
+
 // Mario Jump
 RunnerClass.prototype.jump = function(x) {
   var h = [0, 2, 4, 6, 8, 10, 12, 13, 14, 15, 16, 17, 18, 18, 19, 19, 19,
@@ -777,6 +1047,13 @@ mi.onload = function() {
   L1C.drawImage(mi, 0, 0, mi.width * MAGNIFY, mi.height * MAGNIFY);
 };
 
+// Prepare HIragana
+hiraganaimg = new Image();
+hiraganaimg.src = "image/hiragana.png";
+hiraganaimg.onload = function() {
+  HIRAGANA = sliceImage(hiraganaimg, 16, 16, 1);
+};
+
 // Prepare Characters
 char_sheet = new Image();
 char_sheet.src = "image/character_sheet.png";
@@ -784,6 +1061,10 @@ char_sheet.src = "image/character_sheet.png";
 // Prepare mini Characters
 minicimg = new Image();
 minicimg.src = "image/minichars.png";
+
+// Prepare note length
+notelenimg = new Image();
+notelenimg.src = "image/note_length.png";
 
 // Prepare the Bomb!
 BOMBS = []
@@ -869,6 +1150,71 @@ function drawRepeatHead(x) {
   var h = RepeatMarks[0].height;
   L2C.drawImage(RepeatMarks[0], x * MAGNIFY, 56 * MAGNIFY);
 }
+// Draw Hiragana
+function drawHiragana(letter, x, y) {
+  // First, split letter to determin if it contains many chars
+  var letters = letter.split('|');
+  // results IS an array of result.
+  // A result is an array of bytes for one phonetic symbol.
+  // The width for displaying a result is one or two CHARSIZE even if result.length = 3.
+  // Because 3-byte letter is one of below characters.
+  // ぎゃぎゅぎょずぃじゃじゅじょでぃどぅでゅびゃびゅびょぴゃぴゅぴょ
+  var results = [];
+  var count = 0;
+  for (var j = 0; j < letters.length; j++) {
+    var result = [];
+    letter = letters[j];
+    for (var i = 0; i < letter.length; i++) {
+      var idx = Uni2Hira[letter.charCodeAt(i) - 0x3041];
+      if (idx == undefined) console.log("Uni2Hira failed: letter = " + letter);
+      if ((idx & 0x40) == 0x40) { // voiced consonant or dakuon
+        result.push(idx ^ 0x40);
+        result.push(48);
+      } else if ((idx & 0x80) == 0x80) { // semivoiced sound or Handakuon
+        result.push(idx ^ 0x80);
+        result.push(49);
+      } else {
+        result.push(idx);
+      }
+    }
+    results.push(result);
+    // If the length is 3, it uses both (Dakuon or Handakuon) and small size char.
+    // They will take the width of 2 characters
+    count += (result.length == 3) ? 2 : result.length;
+  }
+  var size  = CHARSIZE;
+  var ssize = HALFCHARSIZE;
+  function drawHiraKomoji(c, x, y) {
+    if (c > 54) { // if c is in ぁぃぅぇぉ
+      c = c - 55; // use bigger (usual size) instead
+      L2C.drawImage(HIRAGANA[c], x + size, y + ssize, ssize, ssize);
+    } else {
+      L2C.drawImage(HIRAGANA[c], x + size, y, size, size);
+    }
+  }
+  var len = results.length;
+  if (len == 2) x -= HALFCHARSIZE;
+  else if (len  >= 3) {
+    size /= 2;
+    ssize /= 2;
+  }
+  if (len > 4) len = 4; // Ignore over 4 letters. NO SPACE TO DRAW!!
+  L2C.imageSmoothingEnabled = false; // Chrome will ignore this probably
+  for (var i = 0; i < len; i++) {
+    var cx = (i % 2 == 0) ? x : x + size;
+    var cy = (i < 2) ? y : y + ssize;
+    result = results[i];
+    if (MAGNIFY == 1) {
+      L2C.drawImage(HIRAGANA[result[0]], cx, cy);
+      if (result.length > 1) L2C.drawImage(HIRAGANA[result[1]], cx + size, cy);
+      if (result.length > 2) L2C.drawImage(HIRAGANA[result[2]], cx + size, cy);
+    } else {
+      L2C.drawImage(HIRAGANA[result[0]], cx, cy, size, size);
+      if (result.length > 1) drawHiraKomoji(result[1], cx, cy);
+      if (result.length > 2) drawHiraKomoji(result[2], cx, cy);
+    }
+  }
+}
 
 // Score Area (8, 41) to (247, 148)
 function drawScore(pos, notes, scroll) {
@@ -878,16 +1224,14 @@ function drawScore(pos, notes, scroll) {
   L2C.rect(8 * MAGNIFY, 0, (247 - 8 + 1) * MAGNIFY, SCRHEIGHT * MAGNIFY);
   L2C.clip();
 
-  // If mouse cursor on or under the C, draw horizontal line
   var realX = MouseX - OFFSETLEFT;
   var realY = MouseY - OFFSETTOP;
   var g = toGrid(realX, realY);
-  var gridX;
-  var gridY;
-  // Edit mode only, no scroll
+  var gridX = g[0];
+  var gridY = g[1];
+  // If mouse cursor on or under the C, draw horizontal line
+  //   Edit mode only, no scroll
   if (GameStatus == 0 && g !== false) {
-    gridX = g[0];
-    gridY = g[1];
     if (gridY >= 11) drawHorizontalBar(gridX, 0);
   }
 
@@ -940,7 +1284,7 @@ function drawScore(pos, notes, scroll) {
 
     // Get notes down
     var delta = 0;
-    if (GameStatus == 2  && Runner.pos - 2 == barnum) {
+    if ((GameStatus == 2 || GameStatus == 4) && Runner.pos - 2 == barnum) {
       var idx;
       if (Runner.x == 120) {
         idx = (Runner.scroll >= 16) ? Runner.scroll - 16 : Runner.scroll + 16;
@@ -952,16 +1296,16 @@ function drawScore(pos, notes, scroll) {
       delta = tbl[Math.round(idx)];
     }
     var hflag = false;
+    var exist = [];
     for (var j = 0; j < b.length; j++) {
       if (typeof b[j] == "string") continue; // for dynamic TEMPO
 
-//      var sndnum = b[j] >> 8;
-//      var scale  = b[j] & 0x0F;
       var a = decodeNote(b[j]);
       var sndnum = a[0];
       var key    = a[1];
       var isFlat = a[2];
-      var scale  = key2GridY(a[1], isFlat);
+      var scale  = key2GridY(key, isFlat);
+      var len    = a[3];
       // When CurChar is eraser, and the mouse cursor is on the note,
       // an Image of note blinks.
       if (CurChar == ERASERIDX && g != false && i == gridX && scale == gridY &&
@@ -971,8 +1315,63 @@ function drawScore(pos, notes, scroll) {
         hflag = true;
         drawHorizontalBar(i, scroll);
       }
-      L2C.drawImage(SOUNDS[sndnum].image, x - HALFCHARSIZE,
-        (40 + scale * 8 + delta) * MAGNIFY);
+      var cx = x - HALFCHARSIZE;
+      var cy = (40 + scale * 8 + delta) * MAGNIFY;
+      if (MikuEntity.slot != undefined && sndnum == 15) {
+        if (MikuMemo[barnum] == undefined) {
+          var prevIdx = MikuMemo[barnum - 1];
+          if (prevIdx == 0) {
+            MikuMemo[barnum] = 0; MikuMemo[barnum + 1] = 1;
+          } else
+            MikuMemo[barnum] = prevIdx + ((len == 1) ? 0 : 1);
+        }
+        if (MikuMemo[barnum] >= MikuEntity.slot.length) MikuMemo[barnum] = 0;
+        if (exist[scale] == true) L2C.drawImage(HIRAGANA[39], cx, cy, CHARSIZE, CHARSIZE);
+        var letter = MikuEntity.slot[MikuMemo[barnum]];
+        if (len == 1 || letter == undefined) {
+          L2C.drawImage(SOUNDS[sndnum].image, cx, cy);
+        } else {
+          letter = MikuEntity.slot[MikuMemo[barnum]];
+          drawHiragana(letter, cx, cy);
+        }
+      } else
+        L2C.drawImage(SOUNDS[sndnum].image, cx, cy);
+      // Alpha blend value maker
+      function getAlpha(flipflop) {
+        var time = window.performance.now();
+        var alpha;
+        if (GameStatus == 2) alpha = 1;
+        else {
+          alpha = (time % 1000) / 1000;
+          if (~~(time / 1000) % 2 == flipflop) { // Math.floor
+            alpha = 1 - alpha;
+          }
+        }
+        return alpha;
+      }
+      // Draw Note Length if it need to
+      if (len != 0) {
+        var alpha = getAlpha(1);
+        L2C.save();
+        L2C.globalAlpha = alpha;
+        L2C.drawImage(NoteLen[len - 1], cx, cy);
+        L2C.restore();
+      }
+      // Draw Note octave if it need to
+      if ((key < 59 && !(key == 58 && isFlat)) || key > 80) {
+        var octave = ~~(key / 12);
+        var doremi = key - octave * 12;
+        var origin = (key < 59) ? ((scale == 12) ? 4 : 5) : ((doremi > 8) ? 5 : 6);
+        var diff = octave - origin;
+        var alpha = getAlpha(0);
+        L2C.save();
+        L2C.globalAlpha = alpha;
+        var sign = (diff < 0) ? GNUMBER[11] : GNUMBER[10];
+        L2C.drawImage(sign, cx + 6 * MAGNIFY, cy);
+        if (diff < 0) diff = ~diff + 1;
+        L2C.drawImage(GNUMBER[diff], cx + 11 * MAGNIFY, cy);
+        L2C.restore();
+      }
 
       var x2 = (x - 13 * MAGNIFY);
       var y = (44 + scale * 8 + delta) * MAGNIFY;
@@ -981,7 +1380,10 @@ function drawScore(pos, notes, scroll) {
       } else if (isEbony(key)) {
         L2C.drawImage(Semitones[0], x2, y);
       }
+      exist[scale] = true;
     }
+    // If MikuMemo never created, copy previous one.
+    if (MikuMemo[barnum] == undefined) MikuMemo[barnum] = MikuMemo[barnum - 1];
   }
   if (GameStatus == 0) {
     L2C.beginPath();
@@ -1011,7 +1413,7 @@ function drawBarNumber(gridX, barnum) {
   var nums = [];
   while (barnum > 0) {
     nums.push(barnum % 10);
-    barnum = Math.floor(barnum / 10);
+    barnum = ~~(barnum / 10); // Math.floor
   }
   var len = nums.length;
   if (len == 1) x += 2 * MAGNIFY;
@@ -1060,10 +1462,10 @@ function toGrid(realX, realY) {
       realY < gridTop  || realY > gridBottom)
     return false;
 
-  var gridX = Math.floor((realX - gridLeft) / CHARSIZE);
+  var gridX = ~~((realX - gridLeft) / CHARSIZE); // Math.floor
   if (gridX % 2 != 0) return false; // Not near the bar
   gridX /= 2;
-  var gridY = Math.floor((realY - gridTop) / HALFCHARSIZE);
+  var gridY = ~~((realY - gridTop) / HALFCHARSIZE);
 
   // Consider G-Clef and repeat head area
   if (CurPos == 0 && gridX < 2 || CurPos == 1 && gridX == 0)
@@ -1112,7 +1514,7 @@ function mouseClickListener(e) {
 
   if (b >= CurScore.end) return;
 
-  var notes = CurScore['notes'][b];
+  var notes = CurScore.notes[b];
   // Delete
   if (CurChar == ERASERIDX || e.button == 2) {
     // Delete Top of the stack
@@ -1131,11 +1533,22 @@ function mouseClickListener(e) {
   }
 
   // Handle semitone
-  var isFlat = (e.ctrlKey )
-//  note = (CurChar << 8) | gridY;
   var note = encodeNote(gridY, CurChar, e.shiftKey, e.ctrlKey, 0);
+  var a1 = decodeNote(note); // To change gridY to Key
+  var found = undefined;
+  for (var i = 0; i < notes.length; i++) {
+    var a2 = decodeNote(notes[i]);
+    if (a1[0] == a2[0]) {
+      if (a1[0] == 15) {found = i; break;}
+      if (a1[1] == a2[1]) return;
+      if (key2GridY(a2[1], a2[2]) == gridY) return;
+    }
+  }
+  if (found != undefined) {
+    notes.splice(found, 1); // If SND is Miku, delete old one
+    MikuMemo[b] = undefined; // delete MikuMemo so that new number will be overwritten here
+  }
   SOUNDS[CurChar].play(note & 0x7F);
-  if (notes.indexOf(note) != -1) return; // Already have it.
   notes.push(note);
   CurScore['notes'][b] = notes;
 }
@@ -1359,6 +1772,28 @@ function selectListener(e) {
   resizeScreen();
 }
 
+// Make Green
+// Change color of Numbers to Green
+function makeGreen(img) {
+  var w = img.width;
+  var h = img.height;
+  var c = document.createElement("canvas");
+  c.width  = w;
+  c.height = h;
+  var cc = c.getContext("2d");
+  cc.drawImage(img, 0, 0);
+  var id = cc.getImageData(0, 0, w, h);
+  for (var i = 0; i < id.data.length; i += 4) {
+    if (id.data[i + 3] == 255) {
+      id.data[i + 1] = 255;
+    } else id.data[i + 3] = 64;
+  }
+  cc.putImageData(id, 0, 0);
+  var result = new Image();
+  result.src = c.toDataURL();
+  return result;
+}
+
 // resize screen using MAGNIFY
 //   If we can use Elm.style.imageRendering = Crisp-edged,
 //   You can avoid these re-configuring. Sigh.
@@ -1376,6 +1811,7 @@ function resizeScreen() {
   Miku.images = sliceImage(mikuimg, 20, 28);
   Semitones = sliceImage(semitoneimg, 5, 12);
   EGGMAN.images = sliceImage(eggimg, 16, 16);
+  NoteLen = sliceImage(notelenimg, 16, 16);
 
   MAT.width  = ORGWIDTH  * MAGNIFY;
   MAT.height = ORGHEIGHT * MAGNIFY;
@@ -1465,6 +1901,7 @@ function resizeScreen() {
 
   // Make number images from the number sheet
   NUMBERS = sliceImage(numimg, 5, 7);
+  GNUMBER = sliceImage(gnumimg, 5, 7);
 
   var b = document.getElementById("3beats");
   b.redraw();
@@ -1528,6 +1965,9 @@ function resizeScreen() {
 // INIT routine
 window.addEventListener("load", onload);
 function onload() {
+  // Note Length images
+  NoteLen = sliceImage(notelenimg, 16, 16);
+
   // Make buttons for changing a kind of notes.
   //   1st mario:   x=25, y=9, width=11, height=12
   //   2nd Kinopio: X=39, y=9, width=11, height=12
@@ -1711,6 +2151,8 @@ function onload() {
 
   // Make number images from the number sheet
   NUMBERS = sliceImage(numimg, 5, 7);
+  gnumimg = makeGreen(numimg);
+  GNUMBER = sliceImage(gnumimg, 5, 7);
 
   // Prepare Beat buttons w=14, h=15 (81, 203) (96, 203)
   // (1) Disable self, Enable the other
@@ -1773,7 +2215,8 @@ function onload() {
     var b = document.getElementById("loop");
     if (CurScore.loop) b.set(); else b.reset();
     var s = document.getElementById("scroll");
-    s.max = CurScore.end - 5;
+    CurMaxBars = CurScore.end + 1;
+    s.max = CurMaxBars - 6;
     s.value = 0;
     CurPos = 0;
     CurSong = self;
@@ -2041,30 +2484,208 @@ function onload() {
 }
 
 function handleKeyboard(e) {
-  console.log("e.keyCode = " + e.keyCode);
-  console.log("e.shiftKey = " + e.shiftKey);
+//  console.log("e.keyCode = " + e.keyCode);
+//  console.log("e.shiftKey = " + e.shiftKey);
+
+  // WARNING: r's properties are STRING! Check Implicit type change
+  var r = document.getElementById('scroll');
   switch (e.keyCode) {
     case 32: // space -> play/stop or restart with shift
       var playBtn = document.getElementById('play');
       if (playBtn.disabled == false || e.shiftKey) {
-        playListener.call(playBtn,e);
+        playListener.call(playBtn, e);
       } else {
-        stopListener.call(document.getElementById('stop'),e);
+        stopListener.call(document.getElementById('stop'), e);
       }
       e.preventDefault();
       break;
 
+    // r.value is limited between r.min and r.max
+    // So you don't have to check the limit value here
+    // If you put String into CurPos, it fails.
     case 37: // left -> scroll left
-      var r = document.getElementById('scroll');
-      if (r.value > 0) CurPos = --r.value;
+    case 188:
+      r.value = CurPos - 1;
+      CurPos = parseInt(r.value);
       e.preventDefault();
       break;
 
     case 39: // right -> scroll right
-      var r = document.getElementById('scroll');
-      if (r.value < CurMaxBars - 6) CurPos = ++r.value;
+    case 190:
+      r.value = CurPos + 1;
+      CurPos = parseInt(r.value);
       e.preventDefault();
       break;
+
+    case 34: // Page Down
+    case 221:
+    case 79:
+      r.value = CurPos + 8;
+      CurPos = parseInt(r.value);
+      e.preventDefault();
+      break;
+    case 33: // Page Up
+    case 219:
+    case 73: 
+      r.value = CurPos - 8;
+      CurPos = parseInt(r.value);
+      // I need to use Ctrl + Shift + I for debugger!!
+      if (!(e.shiftKey && e.ctrlKey)) e.preventDefault();
+      break;
+
+    case 81: // Reset note length
+      setNoteLength(0);
+      e.preventDefault();
+      break;
+    case 87: // Make note length 0   Note Off
+      setNoteLength(1);
+      e.preventDefault();
+      break;
+    case 69: // Make note length 0.5 Staccato
+      setNoteLength(2);
+      e.preventDefault();
+      break;
+
+    case 187: // Octave Up
+      changeNoteOctave(12);
+      e.preventDefault();
+      break;
+    case 189: // Octave Down
+      changeNoteOctave(-12);
+      e.preventDefault();
+      break;
+
+    case 84: // T: Test Play
+      if (GameStatus != 0) break;
+      e.preventDefault();
+      testPlayListener(e.shiftKey);
+      break;
+  }
+}
+
+// Test Play Listener:
+//   When user push 't', A runner plays the part of the score only on the screen.
+//   When user push shift + 'T', it will continue playing by changing CurPos.
+function testPlayListener(isShift) {
+  SysSnd.click.play(65);
+
+  // Clear MIDI condition
+  if (MIDIOUT) MIDIOUT.stopAll();
+
+  GameStatus = 4; // Without Enter, nor Leave
+  if (AnimeID != 0) cancelAnimationFrame(AnimeID);
+  Runner.init4testPlay();
+
+  // Find the 1st Miku note to set lyric position to NSX-39
+  if (MikuMemo.length > CurPos + 8 - 2) {
+    MikuEntity.doremiMode = false;
+    OUTER: for (var i = (CurPos > 1) ? CurPos - 2 : 0; i < CurPos + 8 - 2; i++) {
+      var notes = CurScore.notes[i];
+      for (var j = 0; j < notes.length; j++) {
+        var note = notes[j];
+        if (((note >> 8) & 0x1F) == 15) break OUTER;
+      }
+    }
+    console.log('i = ' + i);
+    var pos = MikuMemo[i];
+    if (pos != undefined) {
+      MikuEntity.idxL = pos;
+      for (var i = 0; i < MikuEntity.idxL; i++) {
+        if (MikuEntity.slot[i].indexOf('|') != -1) pos++;
+      }
+      // 0 is special case for MikuMemo. I think MikuMemo idea is bad.
+      console.log("slot = " + (pos >> 6) + " pos = " + (pos % 64));
+      MikuEntity.curSlot = (pos >> 6) + 1;
+      MikuEntity.changeSlot(MikuEntity.curSlot);
+      MikuEntity.numOfChars = pos % 64;
+      if (pos != 0) MikuEntity.changeLyricPosition(pos % 64);
+    }
+  }
+
+  if (isShift) {
+    var pb = document.getElementById('play');
+    pb.disabled = true;
+    pb.style.backgroundImage = "url(" + pb.images[1].src + ")";
+    var sb = document.getElementById('stop');
+    sb.style.backgroundImage = "url(" + sb.images[0].src + ")";
+    sb.disabled = false;
+    requestAnimFrame(doRunnerTestPlayNonStop);
+  } else
+    requestAnimFrame(doRunnerTestPlay);
+}
+
+function doRunnerTestPlay(timeStamp) {
+  bombTimer.checkAndFire(timeStamp);
+  if (Runner.x < ORGWIDTH) {
+    Runner.testPlay(timeStamp);
+    AnimeID = requestAnimFrame(doRunnerTestPlay);
+    return;
+  }
+  GameStatus = 0;
+  if (MIDIOUT) MIDIOUT.stopAll();
+  requestAnimFrame(doAnimation);
+}
+
+function doRunnerTestPlayNonStop(timeStamp) {
+  bombTimer.checkAndFire(timeStamp);
+  if (Runner.pos - 2 >= CurScore.end -1) {
+    GameStatus = 0;
+    stopListener.call(document.getElementById('stop'));
+    return;
+  }
+
+  if (Runner.x < ORGWIDTH) {
+    Runner.testPlay(timeStamp);
+  } else {
+    CurPos += 8;
+    Runner.x -= ORGWIDTH;
+  }
+  AnimeID = requestAnimFrame(doRunnerTestPlayNonStop);
+}
+
+
+function setNoteLength(len) {
+  changeNoteProperty(function (a) { // a stands for array
+    a[3] = len;
+    return a;
+  });
+}
+
+function changeNoteOctave(diff) {
+  changeNoteProperty(function (a) {
+    var key = a[1];
+    key += diff;
+    if (key < 0 || key > 0x7F) key -= diff;
+    a[1] = key;
+    return a;
+  });
+}
+
+// change note property:
+//   Input fn is a function which changes one or more values in the array.
+//  The function's input is array of the properties of a note.
+function changeNoteProperty(fn) {
+  var realX = MouseX - OFFSETLEFT;
+  var realY = MouseY - OFFSETTOP;
+  var g = toGrid(realX, realY);
+  var gridX = g[0];
+  var gridY = g[1];
+  var barnum = CurPos + gridX - 2;
+  var notes = CurScore.notes[barnum];
+  if (notes == undefined || notes.length == 0) return;
+  for (var i = notes.length - 1; i >= 0; i--) {
+    var note = notes[i];
+    if (typeof note == "string") continue;
+    var a = decodeNote(note);
+    var key    = a[1];
+    var isFlat = a[2];
+    var scale  = key2GridY(key, isFlat);
+    if (scale == gridY) {
+      a = fn(a);
+      notes[i] = reencodeNote(a[1], a[0], a[2], a[3]);
+      SysSnd.click.play(65);
+      break;
+    }
   }
 }
 
@@ -2120,8 +2741,10 @@ function playListener(e) {
   GameStatus = 1; // Mario Entering the stage
   CurPos = 0;     // doAnimation will draw POS 0 and stop
   Runner.init();
-  MikuEntity.initLyric();
-  requestAnimFrame(doRunnerEnter);
+  // Start AFTER writing lyrics
+  MikuEntity.initLyric(function() {
+    requestAnimFrame(doRunnerEnter);
+  });
 }
 
 // Stop Button Listener
@@ -2232,6 +2855,8 @@ function fullInitScore() {
   // CurScore.loop = false;
   CurScore.end = 0;
   CurScore.tempo = 0;
+  MikuMemo = [0];
+  MikuEntity.slot = undefined;
 }
 
 // Initialize Score
@@ -2252,6 +2877,9 @@ function initScore() {
   var e = new Event("click");
   e.soundOff = true;
   document.getElementById("4beats").dispatchEvent(e);
+  MikuMemo = [0];
+  MikuEntity.slot = undefined;
+  document.getElementById("lyric").value = "";
 }
 
 // Easiest and Fastest way to clone
@@ -2263,14 +2891,15 @@ function clone(obj) {
 //   img: Image of the sprite sheet
 //   width: width of the Character
 //   height: height of the Charactter
-function sliceImage(img, width, height) {
+function sliceImage(img, width, height, mag) {
+  var magnify = mag || MAGNIFY;
   var result = [];
-  var imgw = img.width * MAGNIFY;
-  var imgh = img.height * MAGNIFY;
+  var imgw = img.width * magnify;
+  var imgh = img.height * magnify;
   var num = Math.floor(img.width / width);
   var all = num * Math.floor(img.height / height);
-  var charw = width * MAGNIFY;
-  var charh = height * MAGNIFY;
+  var charw = width * magnify;
+  var charh = height * magnify;
 
   for (var i = 0; i < all; i++) {
     var tmpcan = document.createElement("canvas");
