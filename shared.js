@@ -310,40 +310,40 @@ function key2GridY(note, isFlat) {
 //   (Using Japanese in English world (computer) is always like going to hell...)
 //  Refer: http://en.wikipedia.org/wiki/Hiragana_(Unicode_block)
 Uni2Hira = [
-  55,    0,   56,    1,   57,    2,   58,    3,   59,    4, // ‚ s
-   5, 0x45,    6, 0x46,    7, 0x47,    8, 0x48,    9, 0x49, // ‚©s
-  10, 0x4A,   11, 0x4B,   12, 0x4C,   13, 0x4D,   14, 0x4E, // ‚³s
-  15, 0x4F,   16, 0x50,   53,   17, 0x51,   18, 0x52,   19, 0x53, // ‚½s (with small ‚Â)
-  20,   21,   22,   23,   24, // ‚Ès
-  25, 0x59, 0x99,   26, 0x5A, 0x9A, 27, 0x5B, 0x9B, 28, 0x5C, 0x9C, 29, 0x5D, 0x9D, // ‚Í‚Î‚Ï
-  30,   31,   32,   33,   34, // ‚Üs
-  50, 35, 51, 36, 52, 37, // ‚á‚â‚ã‚ä‚å‚æ
-  40, 41, 42, 43, 44, undefined, 45, // ‚çs + ‚í
-  undefined, undefined, 46, 47 // ‚ğ‚ñ
+  55,    0,   56,    1,   57,    2,   58,    3,   59,    4, // ã‚è¡Œ
+   5, 0x45,    6, 0x46,    7, 0x47,    8, 0x48,    9, 0x49, // ã‹è¡Œ
+  10, 0x4A,   11, 0x4B,   12, 0x4C,   13, 0x4D,   14, 0x4E, // ã•è¡Œ
+  15, 0x4F,   16, 0x50,   53,   17, 0x51,   18, 0x52,   19, 0x53, // ãŸè¡Œ (with small ã¤)
+  20,   21,   22,   23,   24, // ãªè¡Œ
+  25, 0x59, 0x99,   26, 0x5A, 0x9A, 27, 0x5B, 0x9B, 28, 0x5C, 0x9C, 29, 0x5D, 0x9D, // ã¯ã°ã±
+  30,   31,   32,   33,   34, // ã¾è¡Œ
+  50, 35, 51, 36, 52, 37, // ã‚ƒã‚„ã‚…ã‚†ã‚‡ã‚ˆ
+  40, 41, 42, 43, 44, undefined, 45, // ã‚‰è¡Œ + ã‚
+  undefined, undefined, 46, 47 // ã‚’ã‚“
 ];
 
 // Make Char to number table for NSX-39
 PhoneticSymbols = [
-"‚ ", "‚¢", "‚¤", "‚¦", "‚¨", "‚©", "‚«", "‚­", "‚¯", "‚±",
-"‚ª", "‚¬", "‚®", "‚°", "‚²", "‚«‚á", "‚«‚ã", "‚«‚å",
-"‚¬‚á", "‚¬‚ã", "‚¬‚å", "‚³", "‚·‚¡", "‚·", "‚¹", "‚»",
-"‚´", "‚¸‚¡", "‚¸", "‚º", "‚¼", "‚µ‚á", "‚µ", "‚µ‚ã", "‚µ‚¥", "‚µ‚å",
-"‚¶‚á", "‚¶", "‚¶‚ã", "‚¶‚¥", "‚¶‚å", "‚½", "‚Ä‚¡", "‚Æ‚£", "‚Ä", "‚Æ",
-"‚¾", "‚Å‚¡", "‚Ç‚£", "‚Å", "‚Ç", "‚Ä‚ã", "‚Å‚ã",
-"‚¿‚á", "‚¿", "‚¿‚ã", "‚¿‚¥", "‚¿‚å", "‚Â‚Ÿ", "‚Â‚¡", "‚Â", "‚Â‚¥", "‚Â‚§",
-"‚È", "‚É", "‚Ê", "‚Ë", "‚Ì", "‚É‚á", "‚É‚ã", "‚É‚å",
-"‚Í", "‚Ğ", "‚Ó", "‚Ö", "‚Ù", "‚Î", "‚Ñ", "‚Ô", "‚×", "‚Ú",
-"‚Ï", "‚Ò", "‚Õ", "‚Ø", "‚Û",
-"‚Ğ‚á", "‚Ğ‚ã", "‚Ğ‚å",
-"‚Ñ‚á", "‚Ñ‚ã", "‚Ñ‚å",
-"‚Ò‚á", "‚Ò‚ã", "‚Ò‚å",
-"‚Ó‚Ÿ", "‚Ó‚¡", "‚Ó‚ã", "‚Ó‚¥", "‚Ó‚§",
-"‚Ü", "‚İ", "‚Ş", "‚ß", "‚à",
-"‚İ‚á", "‚İ‚ã", "‚İ‚å",
-"‚â", "‚ä", "‚æ",
-"‚ç", "‚è", "‚é", "‚ê", "‚ë",
-"‚è‚á", "‚è‚ã", "‚è‚å", "‚í", "‚¤‚¡", "‚¤‚¥", "‚¤‚§",
-"‚ñ\\", "‚ñm", "‚ñ", "‚ñj", "‚ñn"
+"ã‚", "ã„", "ã†", "ãˆ", "ãŠ", "ã‹", "ã", "ã", "ã‘", "ã“",
+"ãŒ", "ã", "ã", "ã’", "ã”", "ãã‚ƒ", "ãã‚…", "ãã‚‡",
+"ãã‚ƒ", "ãã‚…", "ãã‚‡", "ã•", "ã™ãƒ", "ã™", "ã›", "ã",
+"ã–", "ãšãƒ", "ãš", "ãœ", "ã", "ã—ã‚ƒ", "ã—", "ã—ã‚…", "ã—ã‡", "ã—ã‚‡",
+"ã˜ã‚ƒ", "ã˜", "ã˜ã‚…", "ã˜ã‡", "ã˜ã‚‡", "ãŸ", "ã¦ãƒ", "ã¨ã…", "ã¦", "ã¨",
+"ã ", "ã§ãƒ", "ã©ã…", "ã§", "ã©", "ã¦ã‚…", "ã§ã‚…",
+"ã¡ã‚ƒ", "ã¡", "ã¡ã‚…", "ã¡ã‡", "ã¡ã‚‡", "ã¤ã", "ã¤ãƒ", "ã¤", "ã¤ã‡", "ã¤ã‰",
+"ãª", "ã«", "ã¬", "ã­", "ã®", "ã«ã‚ƒ", "ã«ã‚…", "ã«ã‚‡",
+"ã¯", "ã²", "ãµ", "ã¸", "ã»", "ã°", "ã³", "ã¶", "ã¹", "ã¼",
+"ã±", "ã´", "ã·", "ãº", "ã½",
+"ã²ã‚ƒ", "ã²ã‚…", "ã²ã‚‡",
+"ã³ã‚ƒ", "ã³ã‚…", "ã³ã‚‡",
+"ã´ã‚ƒ", "ã´ã‚…", "ã´ã‚‡",
+"ãµã", "ãµãƒ", "ãµã‚…", "ãµã‡", "ãµã‰",
+"ã¾", "ã¿", "ã‚€", "ã‚", "ã‚‚",
+"ã¿ã‚ƒ", "ã¿ã‚…", "ã¿ã‚‡",
+"ã‚„", "ã‚†", "ã‚ˆ",
+"ã‚‰", "ã‚Š", "ã‚‹", "ã‚Œ", "ã‚",
+"ã‚Šã‚ƒ", "ã‚Šã‚…", "ã‚Šã‚‡", "ã‚", "ã†ãƒ", "ã†ã‡", "ã†ã‰",
+"ã‚“\\", "ã‚“m", "ã‚“", "ã‚“j", "ã‚“n"
 ];
 PhoneticSymbols = PhoneticSymbols.reduce(function (o, v, i) {
   o[v] = i;
@@ -480,7 +480,7 @@ MikuEntity.sendNextChar = function () {
   letter = this.lyric[this.idxL++];
   var n = this.lyric[this.idxL];
   var nc = n.charCodeAt(0);
-  // If the next char is one of "‚Ÿ‚¡‚£‚¥‚§‚á‚ã‚å"
+  // If the next char is one of "ããƒã…ã‡ã‰ã‚ƒã‚…ã‚‡"
   if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
         nc & 1 == 1) {
     letter += n;
@@ -544,7 +544,7 @@ MikuEntity.sendThemAll = function (animeRequest) {
   //   Result is an array of one display letter and one phonetic symbol.
   //   WARNING: I don't have English native tongue.
   //   I already am regretting about how I used 's' for plural
-  function getNextLetter(self, letter) {
+  function getNextLetter(self) {
       var letter = self.lyric[self.idxL++];
       while (letter == '\n') letter = self.lyric[self.idxL++];
       if (letter == undefined) return [0, 0];
@@ -552,7 +552,7 @@ MikuEntity.sendThemAll = function (animeRequest) {
       var n  = self.lyric[self.idxL];
       var nc = (n == undefined) ? '\0' : n.charCodeAt(0);
 
-      // If the next char is one of "‚Ÿ‚¡‚£‚¥‚§‚á‚ã‚å"
+      // If the next char is one of "ããƒã…ã‡ã‰ã‚ƒã‚…ã‚‡"
       if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
             nc & 1 == 1) {
         letter += n;
@@ -563,8 +563,8 @@ MikuEntity.sendThemAll = function (animeRequest) {
 
       console.log(letter);
       var tmp = letter;
-      if (tmp == "‚Ã") tmp = "‚Ç‚£";
-      else if (tmp == "‚ğ") tmp = "‚¤‚§";
+      if (tmp == "ã¥") tmp = "ã©ã…";
+      else if (tmp == "ã‚’") tmp = "ã†ã‰";
       var p = PhoneticSymbols[tmp];
       if (p == undefined) {
         console.log("    is not in PS table");
@@ -1158,7 +1158,7 @@ function drawHiragana(letter, x, y) {
   // A result is an array of bytes for one phonetic symbol.
   // The width for displaying a result is one or two CHARSIZE even if result.length = 3.
   // Because 3-byte letter is one of below characters.
-  // ‚¬‚á‚¬‚ã‚¬‚å‚¸‚¡‚¶‚á‚¶‚ã‚¶‚å‚Å‚¡‚Ç‚£‚Å‚ã‚Ñ‚á‚Ñ‚ã‚Ñ‚å‚Ò‚á‚Ò‚ã‚Ò‚å
+  // ãã‚ƒãã‚…ãã‚‡ãšãƒã˜ã‚ƒã˜ã‚…ã˜ã‚‡ã§ãƒã©ã…ã§ã‚…ã³ã‚ƒã³ã‚…ã³ã‚‡ã´ã‚ƒã´ã‚…ã´ã‚‡
   var results = [];
   var count = 0;
   for (var j = 0; j < letters.length; j++) {
@@ -1185,7 +1185,7 @@ function drawHiragana(letter, x, y) {
   var size  = CHARSIZE;
   var ssize = HALFCHARSIZE;
   function drawHiraKomoji(c, x, y) {
-    if (c > 54) { // if c is in ‚Ÿ‚¡‚£‚¥‚§
+    if (c > 54) { // if c is in ããƒã…ã‡ã‰
       c = c - 55; // use bigger (usual size) instead
       L2C.drawImage(HIRAGANA[c], x + size, y + ssize, ssize, ssize);
     } else {
