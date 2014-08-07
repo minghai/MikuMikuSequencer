@@ -1,4 +1,4 @@
-/*
+﻿/*
  *  Mario Sequencer Web edition
  *    Programmed by minghai (http://github.com/minghai)
  */
@@ -390,11 +390,12 @@ MikuEntity.play = function(key, delay) {
     var num = 1;
   } else {
     var letter = this.slot[this.idxL];
-    var num = letter.split('|').length;
+    var ls = letter.split('|');
+    var num = ls.length;
 
     // If prevChar == curChar and they're not vowel, key off first to stop concat sounds
     var code = letter.charCodeAt(0);
-    if (this.prevChar == letter && (code < 0x3041 || code > 0x304A)) {
+    if (this.prevChar == ls[0] && (code < 0x3041 || code > 0x304A)) {
       MIDIOUT.send([0x80, this.prevKey, 0x7F]);
     }
   }
@@ -650,6 +651,7 @@ function MIDIEntity(channel, program) {
 MIDIEntity.prototype = new SoundEntity();
 MIDIEntity.prototype.constructor = MIDIEntity;
 MIDIEntity.prototype.play = function (key, delay) {
+  if (this.channel == 9) key -= 24; // If DrumMap, use drums instead
   if (delay == undefined) delay = 0;
   MIDIOUT.send([this.noteOn, key, 0x7F]);
   MIDIOUT.send([this.noteOff, key, 0x3F], window.performance.now() + 60 / CurScore.tempo * 1000);
@@ -664,6 +666,7 @@ MIDIEntity.prototype.playChord = function (noteList, delay) {
     var key = noteList[i];
     var len = key >> 8;
     key &= 0x7F;
+    if (this.channel == 9) key -= 24; // If DrumMap, use drums instead
     if (len == 1) {
       MIDIOUT.send([this.noteOff, key, 0x3F]);
       continue;
