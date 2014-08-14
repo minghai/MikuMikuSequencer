@@ -354,6 +354,7 @@ MikuEntity = new SoundEntity();
 // MikuEntity.doremi = [0x32, 0x72, 0x65, 0x5F, 0x19, 0x6F, 0x16];
 MikuEntity.doremi = [0x32, 0x32, 0x72, 0x72, 0x65, 0x5F, 0x5F, 0x19, 0x19, 0x6F, 0x6F, 0x16];
 MikuEntity.doremiMode = true;
+MikuEntity.commands = [];
 MikuEntity.prevKey = 0;
 MikuEntity.prevChar = "";
 MikuEntity.load = function() { // To avoid load error
@@ -406,14 +407,13 @@ MikuEntity.play = function(key, delay) {
   var curTime = window.performance.now();
   //this.sendNextChar();
   for (var i = 0; i < num; i++) {
-    if (num > 1) console.log("num = " + num + " oneNoteTime = " + oneNoteTime + " oneCharTime = " + oneCharTime + " letter = " + letter);
     MIDIOUT.send([0x90, key, velocity], curTime + oneCharTime * i);
   }
 
   if (len == 2)
     MIDIOUT.send([0x80, key, 0x3F], curTime + oneNoteTime * 0.5);
   else if (this.doremiMode && GameStatus == 0)
-    MIDIOUT.send([0x80, key, 0x3F], curTime + oneNoteTime);
+    MIDIOUT.send([0x80, key, 0x3F], curTime + 500);
 
   if (!this.doremiMode) {
     this.prevChar = letter;
@@ -431,33 +431,13 @@ MikuEntity.playChord = function(noteList, delay) {
   this.play(noteList[0], 0);
 };
 MikuEntity.initLyric = function(fn) {
-  var curLyric= document.getElementById("lyric").value;
   // idxL is a counter for whole lyrics, numOfChars is a counter for each of slots
   this.idxL = 0; // Specify Nth character to sing
-  this.curSlot = 1; // Specify current lyric slot (0-F)
+  this.curSlot = 1; // Specify current lyric slot (1-F)
   this.numOfChars = 0;; // Hold the number of chars sent to MIDI (MAX = 63)
 
-  // Init MikuMemo
-  MikuMemo = [0];
-  // Init MikuMemo[1], if the first bar contains Miku note.
-  var c = 0; //counter
-  OUTER: for (var i = 0; i < CurScore.notes.length; i++) {
-    var notes = CurScore.notes[i];
-    for (var j = 0; j < notes.length; j++) {
-      var note = notes[j] >> 8;
-      var num  = note & 0x1F;
-      var len  = note >> 5;
-      if (num == 15 & len != 1) {
-        c++;
-        if (c == 2) {
-          MikuMemo[i] = 1;
-          break OUTER;
-        }
-        MikuMemo[i] = 0;
-      }
-    }
-  }
 
+  var curLyric = document.getElementById("lyric").value;
   if (curLyric == undefined || curLyric == "") {
     this.Lyric = curLyric;
     this.doremiMode = true;
@@ -494,10 +474,235 @@ MikuEntity.sendNextChar = function () {
   letter = PhoneticSymbols[letter];
   MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0A,0x00,letter,0xF7]);
 }
-MikuEntity.sendThemAll = function (animeRequest) {
-  var savedfunc = MIDIIN.onmidimessage;
-  this.slot = [];
+MikuEntity.parseLyrics = function () {
 
+  // Get Next Letter:
+  //   Result is an array of one display letter and one phonetic symbol.
+  //   WARNING: I don't have English native tongue.
+  //   I already am regretting about how I used 's' for plural
+  function getNextLetter(lyric, idxL) {
+      var letter = lyric[idxL++];
+      while (letter == '\n') letter = lyric[idxL++];
+      if (letter == undefined) return [0, 0];
+
+      var n  = lyric[idxL];
+      var nc = (n == undefined) ? '\0' : n.charCodeAt(0);
+
+      // If the next char is one of "ぁぃぅぇぉゃゅょ"
+      if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
+            nc & 1 == 1) {
+        letter += n;
+        idxL++;
+      } else if (n == "\n") { // Ignore new line or EOF
+        idxL++;
+      } else if (n == '\0') return [0, 0];
+
+      console.log(letter);
+      var tmp = letter;
+      if (tmp == "づ") tmp = "どぅ";
+      else if (tmp == "を") tmp = "うぉ";
+      var p = PhoneticSymbols[tmp];
+      if (p == undefined) {
+        console.log("    is not in PS table");
+      }
+      return [letter, p, idxL];
+  }
+
+  // parse:
+  //   Parse Lyrics under the mode. Calls itself inside recursively.
+  //   results is an array which includes phonectic symbols code
+  //   letters is an array which includes letters for displaying
+  function parseNormal(lyrics, results, letters) {
+    var idxL = 0;
+    OUTER: while (idxL < lyrics.length) {
+      var lr = getNextLetter(lyrics, idxL);
+      idxL = lr[2];
+      var one = lr[0];
+      switch (one) {
+      case '\0':
+        break OUTER;
+      case '(':
+        idxL += parseRound(lyrics.substr(idxL), results, letters);
+        break;
+      case '{':
+        idxL += parseCurly(lyrics.substr(idxL), results, letters);
+        break;
+      case ')':
+        throw Error("Found round blacket without open one at " + idxL);
+      case '}':
+        throw Error("Found curly blacket without open one at " + idxL);
+      default:
+        letters.push(one);
+        results.push(lr[1]);
+      }
+    }
+    return idxL;
+  }
+
+  function parseRound(lyrics, results, letters) {
+    var idxL = 0;
+    var letter = "";
+    OUTER: while (idxL < lyrics.length) {
+      var lr = getNextLetter(lyrics, idxL);
+      idxL = lr[2];
+      var one = lr[0];
+      switch (one) {
+      case '\0':
+        throw Error("Round bracket was not closed until the End of Lyrics");
+      case '(':
+        throw Error("Found recursive round bracket at " + idxL + " in " + lyrics);
+      case '{':
+        throw Error("Found curly bracket inside a round bracket at " + idxL + " in " + lyrics);
+      case ')':
+        break OUTER;
+      case '}':
+        throw Error("Round bracket was not closed before a curly bracket at " + idxL + " in " + lyrics);
+      default:
+        letter += (letter == "") ? one : '|' + one;
+        results.push(lr[1]);
+      }
+    }
+    letters.push(letter);
+    return idxL;
+  }
+
+  function parseCurly(lyrics, results, letters) {
+    var idxL = 0;
+    var reserved = [];
+    var forDisp = [];
+    OUTER: while (idxL < lyrics.length) {
+      var lr = getNextLetter(lyrics, idxL);
+      idxL = lr[2];
+      var one = lr[0];
+      switch (one) {
+      case '\0':
+        throw Error("Curly bracket was not closed until the End of Lyrics");
+      case '(':
+        idxL += parseRound(lyrics.substr(idxL), reserved, forDisp);
+        break;
+      case '{':
+        throw Error("Found curly bracket used recursively at " + idxL + " in " + lyrics);
+      case ')':
+        throw Error("Closing round bracket was found without open at " + idxL + " in " + lyrics);
+      case '}':
+        break OUTER;
+      default:
+        forDisp.push(one);
+        reserved.push(lr[1]);
+      }
+    }
+    MikuEntity.reserved.push([reserved, forDisp]);
+    return idxL;
+  }
+
+  // this.lyric is just a copy of textarea. Used if textarea is edited.
+  // this.slot is used for storing the text for displaying
+  // this.commands is for storing commands specified when to execute
+  this.commands = {};
+  var lines = this.lyric.split('\n');
+  var onlyLyric = ""
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    var num = null;
+    words = line.split(/\s+/);
+    var a = /^@(\d+)/.exec(words[0]);
+    if (a != null) {
+      var num = parseInt(a[1]);
+      words.splice(0, 1);
+    }
+    if (words[0][0] == '#') {
+      words[0] = words[0].substr(1); // remove 1st char
+      if (num == null) doCommand(words)
+      else {
+        if (this.commands[num] == undefined) this.commands[num] = [words];
+        else this.commands[num].push(words);
+      }
+    } else {
+      onlyLyric = onlyLyric.concat(line);
+    }
+  }
+  console.log("onlyLyric = " + onlyLyric);
+
+  var letters = []; // For display
+  var results  = []; // For playing. Chars are changed to more suitable for NSX-39
+  this.reserved = []; // For reserving lyrics to write these into NSX-39 while playing.
+  parseNormal(onlyLyric, results, letters);
+
+  this.slot = letters;
+  this.slotBackup = letters;
+  this.firstResult = results;
+  console.log("MikuEntity.slot = " + this.slot);
+};
+MikuEntity.sendThemAll = function (animeRequest) {
+  this.parseLyrics();
+  writeLyricsIntoPokeMiku(this.firstResult, animeRequest, 1);
+};
+MikuEntity.changeSlot = function(num) {
+  console.log("Change Slot to " + num);
+  MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0D,0x09,0x03,00, num,0xF7]);
+  this.curSlot = num;
+};
+MikuEntity.changeLyricPosition = function(idx) {
+  console.log("Change Lyric Position to " + idx);
+  MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0D,0x09,0x02,00, idx,0xF7]);
+}
+
+// Before (test) play, create whole positions memo
+//   Considers MikuEntity.slot has the 1st lyrics and
+//   MikuEntity.reserved has the others.
+//   So you should call this AFTER calling MikuEntity.sendThemAll
+function initMikuMemo() {
+  // Init MikuMemo and MikuPSMemo
+  MikuMemo   = []; // For display
+  MikuPSMemo = []; // For speicify the position to NSX-39
+  var dc = 0;      // counter for display
+  var pc = 0;      // counter for PS
+  var curLyric = MikuEntity.slotBackup;
+  if (curLyric == undefined || curLyric == "") curLyric = MikuEntity.slot;
+  if (curLyric == undefined || curLyric == "") return;
+
+  for (var i = 0; i < CurScore.notes.length; i++) {
+    // First, change lyrics if we need to.
+    var cmds = MikuEntity.commands[i];
+    if (cmds != undefined) {
+      for (var j = 0; j < cmds.length; j++) {
+        if (cmds[j][0] == "WriteReservedLyrics") {
+          var num = parseInt(cmds[j][1]);
+          curLyric = MikuEntity.reserved[num][1];
+          dc = 0;
+          pc = 0;
+          break;
+        }
+      }
+    }
+
+    var notes = CurScore.notes[i];
+    for (var j = 0; j < notes.length; j++) {
+      var note    = notes[j] >> 8;
+      var sndnum  = note & 0x1F;
+      var len     = note >> 5;
+      if (sndnum == 15 & len != 1) {
+        MikuMemo[i]   = dc;
+        MikuPSMemo[i] = pc;
+        var letter = curLyric[dc];
+        var num = letter.split("|").length;
+        dc++;
+        if (dc >= curLyric.length) dc = 0;
+        pc += num;
+        break;
+      }
+    }
+  }
+}
+
+// Write Lyrics into PokeMiku:
+//   Write arrays of PokeMiku Phonetic Symbols into NEX-39's lyrics slots.
+//   "results" is an array of phonetic symbols. Its length must be under 960.
+//   func is a function to execute after writing. We need it cause we have to start
+//   playing after finished writing lyrics asynchronously.
+//   idx is an option to specify start index. I hope it will be never used.
+function writeLyricsIntoPokeMiku (results, func, idx) {
+ 
   // make lyrics writer:
   //   return Promise which writes lyrics (MAX 64 chars) into a NSX-39 lyrics slot
   //   NSX-39 returns the status as MIDI IN data transfer.
@@ -541,76 +746,21 @@ MikuEntity.sendThemAll = function (animeRequest) {
       }
     });
   }
-  // Get Next Letter:
-  //   Result is an array of one display letter and one phonetic symbol.
-  //   WARNING: I don't have English native tongue.
-  //   I already am regretting about how I used 's' for plural
-  function getNextLetter(self) {
-      var letter = self.lyric[self.idxL++];
-      while (letter == '\n') letter = self.lyric[self.idxL++];
-      if (letter == undefined) return [0, 0];
 
-      var n  = self.lyric[self.idxL];
-      var nc = (n == undefined) ? '\0' : n.charCodeAt(0);
-
-      // If the next char is one of "ぁぃぅぇぉゃゅょ"
-      if (((nc >= 0x3041) && (nc <= 0x3049) || (nc >= 0x3083 && nc <= 0x3087)) &&
-            nc & 1 == 1) {
-        letter += n;
-        self.idxL++;
-      } else if (n == "\n") { // Ignore new line or EOF
-        self.idxL++;
-      } else if (n == '\0') return [0, 0];
-
-      console.log(letter);
-      var tmp = letter;
-      if (tmp == "づ") tmp = "どぅ";
-      else if (tmp == "を") tmp = "うぉ";
-      var p = PhoneticSymbols[tmp];
-      if (p == undefined) {
-        console.log("    is not in PS table");
-      }
-      return [letter, p];
-  }
+  var savedfunc = MIDIIN.onmidimessage;
+  if (results.length > 960) console.log("WARN: Too long lyrics. This will fail.");
 
   var contents = [];
-  while (contents.length < 17) {
-    var letters = []; // For display
-    var result  = []; // For playing. Chars are changed to more suitable for NSX-39
-    while (this.idxL < this.lyric.length && result.length < 64) {
-      var lr = getNextLetter(this);
-      var one = lr[0];
-      if (one == '\0') break;
-      else if (one == '(') {
-        var letter = "";
-        var count = 0;
-        while (lr = getNextLetter(this)) {
-          one = lr[0];
-          if (one == ")") break;
-          count++;
-          letter = (letter == "") ? letter = one : letter + '|' + one;
-          result.push(lr[1]);
-          if (result.length >= 64) {
-            contents.push(result);
-            result = [];
-          }
-        }
-        //letter = "" + count + letter;
-        letters.push(letter);
-      } else {
-        result.push(lr[1]);
-        letters.push(one);
-      }
-    }
-    contents.push(result);
-    console.log("result = " + result);
-    this.slot = this.slot.concat(letters);
-    if (result.length < 64) break;
+  var num = ~~(results.length >> 6);
+  var remainder = results.length - (num << 6);
+  if (remainder != 0) num++;
+  for (var i = 0; i < num; i++) {
+    contents.push(results.slice((i << 6), ((i + 1) << 6)));
   }
+
   // It seems like NSX-39 can handle only one slot request at a time,
   // so Promises are processed sequencially, not concurrently.
   contents.reduce(function(chain, content, idx) {
-    console.log("chain = " + chain);
     console.log("Length = " + content.length + " idx = " + idx);
     return chain.then(function () {
       return makeLyricsWriter(content, idx + 1);
@@ -622,20 +772,40 @@ MikuEntity.sendThemAll = function (animeRequest) {
   }).then(function () {
     MIDIIN.onmidimessage = savedfunc;
     MikuEntity.changeSlot(1);
+    MikuEntity.curSlot = 1;
     MikuEntity.idxL = 0;
-    animeRequest();
+    MikuEntity.numOfChars = 0;
+    func();
   }).catch(function (e) {
     alert("ERR: " + e);
     console.log(e);
   });
-};
-MikuEntity.changeSlot = function(num) {
-  console.log("Change Slot to " + num);
-  MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0D,0x09,0x03,00, num,0xF7]);
-};
-MikuEntity.changeLyricPosition = function(idx) {
-  console.log("Change Lyric Position to " + idx);
-  MIDIOUT.send([0xF0,0x43,0x79,0x09,0x11,0x0D,0x09,0x02,00, idx,0xF7]);
+}
+
+// Do Command
+//   Execute commands written in Lyrics
+//   Commands start with '#', before command you can specify where to start with '@'
+//   Example: "@12 #ChangeSlot 3"
+//
+//   doCommand will be called from Lyrics parser and Play loop
+function doCommand(words) {
+  var command = words[0];
+  switch (command) {
+    case "ChangeSlot":
+      var num = parseInt(words[1]);
+      MikuEntity.changeSlot(num);
+      break;
+    case "ChangeLyricPosition":
+      var num = parseInt(words[1]);
+      MikuEntity.chageLyricPosition(num);
+      break;
+    case "WriteReservedLyrics":
+      var num = parseInt(words[1]);
+      var results = MikuEntity.reserved[num][0];
+      writeLyricsIntoPokeMiku(results, function(){});
+      MikuEntity.slot = MikuEntity.reserved[num][1];
+      break;
+  }
 }
 
 // MIDIEntity
@@ -906,6 +1076,14 @@ function scheduleAndPlay(notes, time) {
   }
   for (var i in dic) {
     SOUNDS[i].playChord(dic[i], time / 1000); // [ms] -> [s]
+  }
+
+  // Should I move this out of this func?
+  var cmds = MikuEntity.commands[Runner.pos - 2];
+  if (cmds != undefined) {
+    for (var i = 0; i < cmds.length; i++) {
+      doCommand(cmds[i]);
+    }
   }
 }
 
@@ -1321,20 +1499,11 @@ function drawScore(pos, notes, scroll) {
       var cx = x - HALFCHARSIZE;
       var cy = (40 + scale * 8 + delta) * MAGNIFY;
       if (MikuEntity.slot != undefined && sndnum == 15) {
-        if (MikuMemo[barnum] == undefined) {
-          var prevIdx = MikuMemo[barnum - 1];
-          if (prevIdx == 0) {
-            MikuMemo[barnum] = 0; MikuMemo[barnum + 1] = 1;
-          } else
-            MikuMemo[barnum] = prevIdx + ((len == 1) ? 0 : 1);
-        }
-        if (MikuMemo[barnum] >= MikuEntity.slot.length) MikuMemo[barnum] = 0;
         if (exist[scale] == true) L2C.drawImage(HIRAGANA[39], cx, cy, CHARSIZE, CHARSIZE);
         var letter = MikuEntity.slot[MikuMemo[barnum]];
         if (len == 1 || letter == undefined) {
           L2C.drawImage(SOUNDS[sndnum].image, cx, cy);
         } else {
-          letter = MikuEntity.slot[MikuMemo[barnum]];
           drawHiragana(letter, cx, cy);
         }
       } else
@@ -1385,8 +1554,6 @@ function drawScore(pos, notes, scroll) {
       }
       exist[scale] = true;
     }
-    // If MikuMemo never created, copy previous one.
-    if (MikuMemo[barnum] == undefined) MikuMemo[barnum] = MikuMemo[barnum - 1];
   }
   if (GameStatus == 0) {
     L2C.beginPath();
@@ -1549,7 +1716,6 @@ function mouseClickListener(e) {
   }
   if (found != undefined) {
     notes.splice(found, 1); // If SND is Miku, delete old one
-    MikuMemo[b] = undefined; // delete MikuMemo so that new number will be overwritten here
   }
   SOUNDS[CurChar].play(note & 0x7F);
   notes.push(note);
@@ -1607,6 +1773,7 @@ SCREEN.addEventListener("drop", function(e) {
     }
     return strip(n1) - strip(n2);
   });
+  files.map(function(x){console.log(x.name)});
   files.map(readFile).reduce(function(chain, fp, idx) {
     return chain.then(function() {
       return fp;
@@ -2489,6 +2656,7 @@ function onload() {
 function handleKeyboard(e) {
 //  console.log("e.keyCode = " + e.keyCode);
 //  console.log("e.shiftKey = " + e.shiftKey);
+  if (document.activeElement.id == "lyric") return;
 
   // WARNING: r's properties are STRING! Check Implicit type change
   var r = document.getElementById('scroll');
@@ -2563,6 +2731,10 @@ function handleKeyboard(e) {
       e.preventDefault();
       testPlayListener(e.shiftKey);
       break;
+
+    case 8: // Ignore Backspace key to avoid go previous page!
+      e.preventDefault();
+      break;
   }
 }
 
@@ -2579,30 +2751,42 @@ function testPlayListener(isShift) {
   if (AnimeID != 0) cancelAnimationFrame(AnimeID);
   Runner.init4testPlay();
 
-  // Find the 1st Miku note to set lyric position to NSX-39
-  if (MikuMemo.length > CurPos + 8 - 2) {
-    MikuEntity.doremiMode = false;
-    OUTER: for (var i = (CurPos > 1) ? CurPos - 2 : 0; i < CurPos + 8 - 2; i++) {
-      var notes = CurScore.notes[i];
-      for (var j = 0; j < notes.length; j++) {
-        var note = notes[j];
-        if (((note >> 8) & 0x1F) == 15) break OUTER;
+  var barnum = CurPos - 2;
+
+  // Reload reserved lyrics if we need to.
+  // ToDo: Conditions have be reviewed.
+  var curLyric = document.getElementById("lyric").value;
+  if (MikuEntity.lyric != curLyric) {
+    MikuEntity.lyric = curLyric;
+    MikuEntity.parseLyrics();
+    var keys = Object.keys(MikuEntity.commands).sort(function (a,b) {return b-a});
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i] <= barnum) {
+        var cmds = MikuEntity.commands[keys[i]];
+        for (var j = 0; j < cmds.length; j++) {
+          doCommand(cmds[j]);
+        }
+        break;
       }
     }
-    console.log('i = ' + i);
-    var pos = MikuMemo[i];
-    if (pos != undefined) {
-      MikuEntity.idxL = pos;
-      for (var i = 0; i < MikuEntity.idxL; i++) {
-        if (MikuEntity.slot[i].indexOf('|') != -1) pos++;
-      }
-      // 0 is special case for MikuMemo. I think MikuMemo idea is bad.
-      console.log("slot = " + (pos >> 6) + " pos = " + (pos % 64));
-      MikuEntity.curSlot = (pos >> 6) + 1;
-      MikuEntity.changeSlot(MikuEntity.curSlot);
-      MikuEntity.numOfChars = pos % 64;
-      if (pos != 0) MikuEntity.changeLyricPosition(pos % 64);
-    }
+  }
+
+  // Reset MikuMemo and MikuPSMemo
+  initMikuMemo();
+  if (barnum < 0) barnum = 0;
+  MikuEntity.idxL = undefined;
+  for (; barnum < CurScore.notes.length; barnum++) {
+    MikuEntity.idxL = MikuMemo[barnum];
+    if (MikuEntity.idxL != undefined) break;
+  }
+  MikuEntity.doremiMode = (MikuEntity.idxL == undefined);
+
+
+  var pos = MikuPSMemo[barnum];
+  if (pos != undefined) {
+    MikuEntity.changeSlot((pos >> 6) + 1);
+    MikuEntity.numOfChars = pos % 64;
+    if (pos != 0) MikuEntity.changeLyricPosition(pos % 64);
   }
 
   if (isShift) {
@@ -2641,6 +2825,7 @@ function doRunnerTestPlayNonStop(timeStamp) {
     Runner.testPlay(timeStamp);
   } else {
     CurPos += 8;
+    document.getElementById("scroll").value = CurPos;
     Runner.x -= ORGWIDTH;
   }
   AnimeID = requestAnimFrame(doRunnerTestPlayNonStop);
@@ -2746,6 +2931,7 @@ function playListener(e) {
   Runner.init();
   // Start AFTER writing lyrics
   MikuEntity.initLyric(function() {
+    initMikuMemo();
     requestAnimFrame(doRunnerEnter);
   });
 }
@@ -2860,6 +3046,7 @@ function fullInitScore() {
   CurScore.tempo = 0;
   MikuMemo = [0];
   MikuEntity.slot = undefined;
+  MikuEntity.commands = [];
 }
 
 // Initialize Score
@@ -2882,6 +3069,7 @@ function initScore() {
   document.getElementById("4beats").dispatchEvent(e);
   MikuMemo = [0];
   MikuEntity.slot = undefined;
+  MikuEntity.commands = [];
   document.getElementById("lyric").value = "";
 }
 
