@@ -805,6 +805,12 @@ function doCommand(words) {
       writeLyricsIntoPokeMiku(results, function(){});
       MikuEntity.slot = MikuEntity.reserved[num][1];
       break;
+    case "ChangeProgram":
+      var channel = parseInt(words[1]);
+      var newprgm = parseInt(words[2]);
+      if (channel == 0 || channel == 9) return;
+      SOUNDS[15 + channel].changeProgram(newprgm);
+      break;
   }
 }
 
@@ -816,10 +822,13 @@ function MIDIEntity(channel, program) {
   this.noteOff = 0x80 | channel;
   // Channel 0 is specific for Miku. Channel 10 is specific for Drum map.
   if (channel == 0 || channel == 10) return;
-  MIDIOUT.send([0xC0 | channel, program]);
+  this.changeProgram(program);
 }
 MIDIEntity.prototype = new SoundEntity();
 MIDIEntity.prototype.constructor = MIDIEntity;
+MIDIEntity.prototype.changeProgram = function (program) {
+  MIDIOUT.send([0xC0 | this.channel, program]);
+}
 MIDIEntity.prototype.play = function (key, delay) {
   if (this.channel == 9) key -= 24; // If DrumMap, use drums instead
   if (delay == undefined) delay = 0;
