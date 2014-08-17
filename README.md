@@ -13,6 +13,7 @@ NSX-39 a.k.a Pocket Miku is a MIDI instrument which has 1 chip
 vocaloid Hatsune Miku and 128 GM MIDI instruments.
 
 More info about NSX-39 and how to order it, please refer this page.
+
 [Gakken NSX-39 "Pocket Miku"](http://www.muffwiggler.com/forum/viewtopic.php?t=114420&sid=3db13b770cbb91faeb24baf78557b37e)
 
 This version of program requires NSX-39 to play. If you don't have one,
@@ -21,13 +22,17 @@ http://github.com/minghai/MarioSequencer
 
 or you can watch how it works with youtube.
 
+
 How to use Miku Miku Sequencer
+
 [![How to use Miku Miku Sequencer](http://img.youtube.com/vi/IrYH8zE_MbE/0.jpg)](http://www.youtube.com/watch?v=IrYH8zE_MbE)
 
 Niko Niko suite - song by Pocket Miku
+
 [![Niko Niko suite - song by Pocket Miku](http://img.youtube.com/vi/2OqES2EnTP8/0.jpg)](http://www.youtube.com/watch?v=2OqES2EnTP8)
 
 "You" from Higurashi no naku koro ni - song by Pocket Miku
+
 [!["You" from Higurashi no naku koro ni - song by Pocket Miku](http://img.youtube.com/vi/mAFiZRwELOk/0.jpg)](http://www.youtube.com/watch?v=mAFiZRwELOk)
 
 
