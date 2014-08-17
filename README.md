@@ -16,17 +16,19 @@ More info about NSX-39 and how to order it, please refer this page.
 [Gakken NSX-39 "Pocket Miku"](http://www.muffwiggler.com/forum/viewtopic.php?t=114420&sid=3db13b770cbb91faeb24baf78557b37e)
 
 This version of program requires NSX-39 to play. If you don't have one,
-please use Mario sequencer instead.
+please use old version of Mario sequencer instead.
 http://github.com/minghai/MarioSequencer
 
 or you can watch how it works with youtube.
 
+How to use Miku Miku Sequencer
 [![How to use Miku Miku Sequencer](http://img.youtube.com/vi/IrYH8zE_MbE/0.jpg)](http://www.youtube.com/watch?v=IrYH8zE_MbE)
 
+Niko Niko suite - song by Pocket Miku
 [![Niko Niko suite - song by Pocket Miku](http://img.youtube.com/vi/2OqES2EnTP8/0.jpg)](http://www.youtube.com/watch?v=2OqES2EnTP8)
 
+"You" from Higurashi no naku koro ni - song by Pocket Miku
 [!["You" from Higurashi no naku koro ni - song by Pocket Miku](http://img.youtube.com/vi/mAFiZRwELOk/0.jpg)](http://www.youtube.com/watch?v=mAFiZRwELOk)
-http://www.youtube.com/watch?v=mAFiZRwELOk
 
 
 How to use
@@ -44,7 +46,7 @@ Basically, What you see is what you get.
 
 Select instruments with the buttons on the top of the screen.
 Most right button is not a instrument, but when you click this blue thing,
-the instruments page changes and you will be choose another 15 instruments.
+the instruments page changes and you will be able to choose another 15 instruments.
 There are 30 instruments. First 15 are WAV sounds. The others are MIDI instruments.
 Last 15 instruments are actually mapped to MIDI channel 1 to 15.
 Channel 1 is special for Miku to sing.
@@ -60,7 +62,7 @@ If you want to delete the notes, select the eraser on the bottom of
 the screen, or just use right click on the target note.
 
 The "save" button will save your music as JSON file.
-Drag and drop your file and you can play it again.
+Drag and drop your file on the score and you can play it again.
 
 This version lacks Undo implementation.
 Watch out, no Undo. So save many times.
@@ -68,14 +70,14 @@ Watch out, no Undo. So save many times.
 This web app supports both JSON score files and MSQ files for Mario Sequencer for Windows.
 Just drag and drop MSQ files, they will be concatinated, and you can save it as one JSON file.
 Please number files such as file1.msq, file2.msq .... fileN.msq.
-If you want to change the tempo in the middle of the music, separate files,
-drag and drop all, then player will remain the tempo of each score and 
+If you want to change the tempo in the middle of the music, separate files, specify diffent tempo for each one,
+save them all as different files, drag and drop all, then player will remain the tempo of each score and 
 change the tempo automatically.
 
 You can use # and b for semitones. Just push Shift and Ctrl key while you left click.
 
-Feel free to make your local clone.
-You can use this appli without internet after download them all.
+Feel free to make your local clone of this repository.
+You can use this app without internet after download them all.
 
 (Do you know Mario Composer file format? Or can you contribute that for me? :-)
 
@@ -87,11 +89,12 @@ Each MIDI note has properties.
 1. Length
   - Default is infinite, or non-stop. Most used one is 0, or key off. The rest is 0.5 for staccato.
 2. Octave
-  - Key of a note is specified by its position on the score, but if you need more higher or lower note, you can specify the octave property relatively higher or lower by octave.
+  - Key of a note is specified by its position on the score, but if you need more higher or lower note, you can specify the octave property relatively one octave higher or lower from its position.
 3. Semitone
-  - You can semitones such as sharp or flat. Semitones are represented with symbols, though if you specify such like B# or Fb, then its position move to C or E.
+  - You can use semitones such as sharp or flat. Semitones are represented with symbols on the score, though if you specify such like B# or Fb, then the note's position will move to C or E.
 
-There might be note's volume (or velocity) as a note's propety, though it is not implemented yet.
+There may be note's volume (or velocity) as a note's propety, though it is not implemented yet.
+Velocity is always 127 (max value) now.
 
 
 Keyboard
@@ -121,7 +124,8 @@ Here I describes what key you can use to edit score or control this app.
   * Test play. It will start playing from the notes on the current screen to the end of the score.
 
 
-If you octave up or down a note, the note might just move up or down if it can in the score area.
+If you octave up or down a note, the note might just move up or down if it can be in the score area.
+Else, +/- num appears on the right shoulder of the note.
 
 
 Lyrics
@@ -144,23 +148,23 @@ For example,
 You can use only permitted Hiragana for NSX-39.
 Only 128 Hiragana in the below table.
 
-|　|0|1|2|3|4|5|6|7|8|9|A|B|C|D|E|F|
-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|-|
-|0|あ|い|う|え|お|か|き|く|け|こ|が|ぎ|ぐ|げ|ご|きゃ|
-|1|きゅ|きょ|ぎゃ|ぎゅ|ぎょ|さ|すぃ|す|せ|そ|ざ|ずぃ|ず|ぜ|ぞ|しゃ|
-|2|し|しゅ|しぇ|しょ|じゃ|じ|じゅ|じぇ|じょ|た|てぃ|とぅ|て|と|だ|でぃ|
-|3|どぅ|で|ど|てゅ|でゅ|ちゃ|ち|ちゅ|ちぇ|ちょ|つぁ|つぃ|つ|つぇ|つぉ|な|
-|4|に|ぬ|ね|の|にゃ|にゅ|にょ|は|ひ|ふ|へ|ほ|ば|び|ぶ|べ|
-|5|ぼ|ぱ|ぴ|ぷ|ぺ|ぽ|ひゃ|ひゅ|ひょ|びゃ|びゅ|びょ|ぴゃ|ぴゅ|ぴょ|ふぁ|
-|6|ふぃ|ふゅ|ふぇ|ふぉ|ま|み|む|め|も|みゃ|みゅ|みょ|や|ゆ|よ|ら|
-|7|り|る|れ|ろ|りゃ|りゅ|りょ|わ|うぃ|うぇ|うぉ|ん\|んm|ん|んj|んn|
+| 　 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | A | B | C | D | E | F |
+| - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+| 0 | あ | い | う | え | お | か | き | く | け | こ | が | ぎ | ぐ | げ | ご | きゃ |
+| 1 | きゅ | きょ | ぎゃ | ぎゅ | ぎょ | さ | すぃ | す | せ | そ | ざ | ずぃ | ず | ぜ | ぞ | しゃ |
+| 2 | し | しゅ | しぇ | しょ | じゃ | じ | じゅ | じぇ | じょ | た | てぃ | とぅ | て | と | だ | でぃ |
+| 3 | どぅ | で | ど | てゅ | でゅ | ちゃ | ち | ちゅ | ちぇ | ちょ | つぁ | つぃ | つ | つぇ | つぉ | な |
+| 4 | に | ぬ | ね | の | にゃ | にゅ | にょ | は | ひ | ふ | へ | ほ | ば | び | ぶ | べ |
+| 5 | ぼ | ぱ | ぴ | ぷ | ぺ | ぽ | ひゃ | ひゅ | ひょ | びゃ | びゅ | びょ | ぴゃ | ぴゅ | ぴょ | ふぁ |
+| 6 | ふぃ | ふゅ | ふぇ | ふぉ | ま | み | む | め | も | みゃ | みゅ | みょ | や | ゆ | よ | ら |
+| 7 | り | る | れ | ろ | りゃ | りゅ | りょ | わ | うぃ | うぇ | うぉ | ん\ | んm | ん | んj | んn |
 
 You can ignore top and left numbers. They are just for programmers.
 As you can see, this table looks a bit different from usual hiragana table.
 For example, "し" is replaced with "すぃ", this means you may use "すぃ" for "し" for better
-pronounciation. But if you are a beginner of Vocaloid, just ignore it for a while. That might
-not be a problem.
-You can see there is not "を", but you can use "うぉ". But this program replace it automatically,
+pronounciation. But if you are a beginner of Vocaloid, just ignore it for a while. Cause that might
+not be a big problem.
+You can see there is not "を", but you have to use "うぉ" instead. But this program replace it automatically,
 so you can use "を" as usual.
 
 There are 5 kinds of "ん" in the table, but this program's parser can't use all of them but only "N". Rest of them will be supported in the near future. ;-)
@@ -169,11 +173,11 @@ There are 5 kinds of "ん" in the table, but this program's parser can't use all 
 
 When you input lyrics, you can use "(" and ")" to put them on one note.
 For example, 「(こん)にちは」 uses 4 notes, not 5 notes.
-Especially, "ん" will not be given its own note so you will use this feature for it lots of the cases. But even then, you can still succeeding notes on the same level in many cases. Choose better way for better expressions.
+Especially, "ん" usually not be given its own note so you will use this feature for it in lots of the cases. But even then, you can still succeeding notes on the same level in many cases. Choose better way for better expressions.
 
 # Reserve lyrics for future use
 Pocket Miku has 16 slots for lyrics. Each of them can have 64 Hiragana characters.
-So the max number of characters is 1024. But slot 0 is inmemory slot and it disappears soon,
+So the max number of characters is 1024. But slot 0 is in-memory slot and it disappears too soon,
 so this program avoid using slot 0. Because of this reason, the max is 960.
 
 960 is good enough for most of all songs, but exceptions such as NikoNiko suite are there.
@@ -182,8 +186,8 @@ Reserved lyrics are not written into PokeMiku when the play starts, but you can 
 when you'd like to with a command which is described below.
 
 This is useful feature. But it requires around 220[ms] for writing lyrics into the slots.
-So it requires 3.3[s] for the max and you can't use MIDI note while writing lyrics.
-You can play the music with WAV notes among that.
+So it requires max 3.3[s] for full slots and you can't use MIDI note while writing lyrics.
+You can play the music with WAV notes among that time.
 
 # commands
 
@@ -201,13 +205,13 @@ delimiter the name and the args with spaces.
 
 These are the commands we have now.
 
-|Command Name|Description|
-|ChangeSlot|Take a positive integer as an argument and change the current slot to the number. Current character position will be the head of that slot. An argument must be from 0 to 15.|
-|ChangeLyricPosition|Take a positive integer as an argument and change the current lyrics character position to the number. An argument must be from 0 to 63.|
-|WriteReservedLyrics|Take a positive integer as an argument and write the-number-th reserved lyrics into Pocket Miku. It will need about 220[ms] in average time for a slot, and max 15 slots requires about 3.3[s] and you can't use MIDI notes while writing. So be carefule to use this.|
-|ChangeProgram|Take two positive integer as arguments. 1st argument specifies MIDI channel, 2nd argument specifies MIDI program. See what kind of instrument you can use from MIDI GM spec.|
+| Command Name | Description |
+| ChangeSlot   | Take a positive integer as an argument and change the current slot to the number. Current character position will be the head of that slot. An argument must be from 0 to 15. |
+| ChangeLyricPosition | Take a positive integer as an argument and change the current lyrics character position to the number. An argument must be from 0 to 63. |
+| WriteReservedLyrics | Take a positive integer as an argument and write the-number-th reserved lyrics into Pocket Miku. It will need about 220[ms] in average time for a slot, and max 15 slots requires about 3.3[s] and you can't use MIDI notes while writing. So be carefule to use this. |
+| ChangeProgram | Take two positive integer as arguments. 1st argument specifies MIDI channel, 2nd argument specifies MIDI program. See what kind of instrument you can use from MIDI GM spec. |
 
-# Examples
+## Examples
 1. @1424 #WriteReservedLyrics 0
   - This will write a reserved lyrics at the bar 1424.
 2. #ChangeProgram 1 127
