@@ -149,7 +149,7 @@ You can use only permitted Hiragana for NSX-39.
 Only 128 Hiragana in the below table.
 
 | Å@ | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | A | B | C | D | E | F |
-| - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - | - |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 0 | Ç† | Ç¢ | Ç§ | Ç¶ | Ç® | Ç© | Ç´ | Ç≠ | ÇØ | Ç± | Ç™ | Ç¨ | ÇÆ | Ç∞ | Ç≤ | Ç´Ç· |
 | 1 | Ç´Ç„ | Ç´ÇÂ | Ç¨Ç· | Ç¨Ç„ | Ç¨ÇÂ | Ç≥ | Ç∑Ç° | Ç∑ | Çπ | Çª | Ç¥ | Ç∏Ç° | Ç∏ | Ç∫ | Çº | ÇµÇ· |
 | 2 | Çµ | ÇµÇ„ | ÇµÇ• | ÇµÇÂ | Ç∂Ç· | Ç∂ | Ç∂Ç„ | Ç∂Ç• | Ç∂ÇÂ | ÇΩ | ÇƒÇ° | Ç∆Ç£ | Çƒ | Ç∆ | Çæ | Ç≈Ç° |
@@ -206,6 +206,7 @@ delimiter the name and the args with spaces.
 These are the commands we have now.
 
 | Command Name | Description |
+|:-------------|:------------|
 | ChangeSlot   | Take a positive integer as an argument and change the current slot to the number. Current character position will be the head of that slot. An argument must be from 0 to 15. |
 | ChangeLyricPosition | Take a positive integer as an argument and change the current lyrics character position to the number. An argument must be from 0 to 63. |
 | WriteReservedLyrics | Take a positive integer as an argument and write the-number-th reserved lyrics into Pocket Miku. It will need about 220[ms] in average time for a slot, and max 15 slots requires about 3.3[s] and you can't use MIDI notes while writing. So be carefule to use this. |
